@@ -1,0 +1,35 @@
+{
+  "name": "@opencode-ai/plugin-memory",
+  "version": "0.1.0",
+  "description": "Persistent cross-session memory plugin for OpenCode",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.2.27",
+    "@opencode-ai/sdk": "^1.2.27",
+    "ai": "^5.0.0",
+    "drizzle-orm": "^0.44.6",
+    "zod": "^4.1.8"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.10",
+    "typescript": "^5.9.2"
+  }
+}
