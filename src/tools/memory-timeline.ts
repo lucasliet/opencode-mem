@@ -18,7 +18,9 @@ export function createMemoryTimelineTool(store: MemoryStore): ToolDefinition {
       after: tool.schema.string().datetime().optional(),
       sessionId: tool.schema.string().optional(),
     },
-    async execute(args) {
+    async execute(args, context) {
+      await store.incrementToolUsage(context.sessionID, "memory_timeline")
+
       const before = args.before ? Date.parse(args.before) : undefined
       const after = args.after ? Date.parse(args.after) : undefined
       if ((args.before && Number.isNaN(before)) || (args.after && Number.isNaN(after))) {

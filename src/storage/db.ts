@@ -54,6 +54,8 @@ export function ensureSchema(sqlite: Database): void {
       compressed_token_count INTEGER NOT NULL DEFAULT 0,
       tool_name TEXT,
       model_used TEXT,
+      quality TEXT NOT NULL DEFAULT 'high',
+      raw_fallback TEXT,
       created_at INTEGER NOT NULL
     );
 
@@ -65,6 +67,9 @@ export function ensureSchema(sqlite: Database): void {
 
     CREATE INDEX IF NOT EXISTS observations_type_idx
       ON observations(type);
+
+    CREATE INDEX IF NOT EXISTS observations_quality_idx
+      ON observations(quality);
 
     CREATE TABLE IF NOT EXISTS session_summaries (
       id TEXT PRIMARY KEY,
@@ -124,7 +129,45 @@ export function ensureSchema(sqlite: Database): void {
 
     CREATE INDEX IF NOT EXISTS user_prompts_session_idx
       ON user_prompts(project_id, session_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS deletion_log (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      project_root TEXT NOT NULL,
+      timestamp INTEGER NOT NULL,
+      criteria TEXT NOT NULL,
+      count INTEGER NOT NULL,
+      initiator TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS deletion_log_timestamp_idx
+      ON deletion_log(project_id, timestamp DESC);
+
+    CREATE TABLE IF NOT EXISTS tool_usage_stats (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      project_root TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      call_count INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS tool_usage_stats_session_tool_idx
+      ON tool_usage_stats(project_id, session_id, tool_name);
   `)
+
+  try {
+    sqlite.exec("ALTER TABLE observations ADD COLUMN quality TEXT NOT NULL DEFAULT 'high';")
+  } catch {
+    void 0
+  }
+
+  try {
+    sqlite.exec("ALTER TABLE observations ADD COLUMN raw_fallback TEXT;")
+  } catch {
+    void 0
+  }
 
   sqlite.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts USING fts5(

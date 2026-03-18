@@ -19,7 +19,9 @@ export function createMemorySearchTool(store: MemoryStore, now: () => number): T
       limit: tool.schema.number().int().min(1).max(50).optional(),
       type: tool.schema.enum(OBSERVATION_TYPES).optional(),
     },
-    async execute(args) {
+    async execute(args, context) {
+      await store.incrementToolUsage(context.sessionID, "memory_search")
+
       const results = await store.searchFTS(args.query, args.limit ?? 10, args.type)
       if (!results.length) {
         return "No memory results found. Try broader keywords, a different observation type, or use memory_timeline."
@@ -27,8 +29,13 @@ export function createMemorySearchTool(store: MemoryStore, now: () => number): T
 
       return results
         .map(
-          (result) =>
-            `[${result.id}] ${result.title} — ${result.subtitle ?? "No subtitle"} (${result.type}, ${formatRelativeTime(result.createdAt, now)})`,
+          (result) => {
+            const marker = result.quality === "low" ? "[?] " : ""
+            const suffix = result.quality === "low"
+              ? " -> low-confidence summary, use memory_get for raw fallback context"
+              : ""
+            return `[${result.id}] ${marker}${result.title} — ${result.subtitle ?? "No subtitle"} (${result.type}, ${formatRelativeTime(result.createdAt, now)})${suffix}`
+          },
         )
         .join("\n")
     },

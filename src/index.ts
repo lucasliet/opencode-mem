@@ -1,5 +1,5 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin"
-import { loadConfig, loadOpenCodeConfig } from "./config"
+import { loadConfig } from "./config"
 import { LanguageModelObservationCompressor, SessionPromptObservationCompressor } from "./compression/compressor"
 import { CompressionPipeline } from "./compression/pipeline"
 import { createCompactionHook } from "./hooks/compaction"
@@ -11,7 +11,9 @@ import { MemoryLogger } from "./logger"
 import { createMemoryDatabase } from "./storage/db"
 import { MemoryStore } from "./storage/store"
 import { createMemoryGetTool } from "./tools/memory-get"
+import { createMemoryForgetTool } from "./tools/memory-forget"
 import { createMemorySearchTool } from "./tools/memory-search"
+import { createMemoryStatsTool } from "./tools/memory-stats"
 import { createMemoryTimelineTool } from "./tools/memory-timeline"
 import type { MemoryPluginOptions, RuntimeState } from "./types"
 
@@ -25,11 +27,9 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
   return async (input: PluginInput) => {
     const now = options.now ?? Date.now
     const pluginConfig = await loadConfig({
-      client: input.client,
       directory: input.directory,
       worktree: input.worktree,
     })
-    const runtimeConfig = await loadOpenCodeConfig(input.client, input.directory)
     const scope = {
       projectId: input.project.id,
       projectRoot: input.worktree,
@@ -71,10 +71,9 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
 
     registerShutdown(pipeline, state, logger)
 
-    await logger.info("Persistent memory plugin initialized", {
+    void logger.info("Persistent memory plugin initialized", {
       dbPath: pluginConfig.dbPath,
       compressionModel: pluginConfig.compressionModel,
-      runtimeModel: runtimeConfig.model,
       configPaths: pluginConfig.configPaths,
     })
 
@@ -83,6 +82,8 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
         memory_search: createMemorySearchTool(store, now),
         memory_timeline: createMemoryTimelineTool(store),
         memory_get: createMemoryGetTool(store),
+        memory_forget: createMemoryForgetTool(store, now),
+        memory_stats: createMemoryStatsTool(store, now),
       },
       event: createEventHook(pipeline, pluginConfig, state, logger),
       "chat.message": createChatMessageHook(store, scope, state, now),

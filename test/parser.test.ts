@@ -38,6 +38,8 @@ describe("observation parser", () => {
     expect(observation.type).toBe("error")
     expect(observation.filesInvolved).toEqual(["src/index.ts"])
     expect(observation.modelUsed).toBe("anthropic/claude-sonnet-4-5")
+    expect(observation.quality).toBe("high")
+    expect(observation.rawFallback).toBeNull()
   })
 
   test("shouldFallbackWhenJsonIsInvalid", () => {

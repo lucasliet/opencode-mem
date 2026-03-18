@@ -1,6 +1,7 @@
 import type { PendingMessage, PluginConfig, SessionSummary } from "../types"
 import { buildCompressionPrompt, buildSessionSummaryPrompt } from "./prompts"
 import { parseObservation, parseSessionSummary } from "./parser"
+import { validateObservation } from "./quality"
 import { delay } from "../utils"
 import { MemoryStore } from "../storage/store"
 import { MemoryLogger } from "../logger"
@@ -148,6 +149,11 @@ export class CompressionPipeline {
       })
 
       const observation = parseObservation(result.text, pendingMessage, result.modelUsed)
+      const qualityResult = validateObservation(observation, pendingMessage.rawContent)
+      observation.quality = qualityResult.quality
+      observation.rawFallback = qualityResult.quality === "low"
+        ? pendingMessage.rawContent.slice(0, 2_000)
+        : null
       await this.store.saveObservation(observation)
       await this.store.updatePendingStatus(pendingMessage.id, "processed", pendingMessage.retryCount, null)
 
@@ -156,8 +162,18 @@ export class CompressionPipeline {
         toolName: pendingMessage.toolName,
         rawTokenCount: observation.rawTokenCount,
         compressedTokenCount: observation.compressedTokenCount,
+        quality: observation.quality,
         durationMs: this.now() - startedAt,
       })
+
+      if (qualityResult.quality !== "high") {
+        await this.logger.warn("Observation quality flagged", {
+          sessionId: pendingMessage.sessionId,
+          toolName: pendingMessage.toolName,
+          quality: qualityResult.quality,
+          flags: qualityResult.flags,
+        })
+      }
     } catch (error) {
       const retryCount = pendingMessage.retryCount + 1
       const message = error instanceof Error ? error.message : String(error)

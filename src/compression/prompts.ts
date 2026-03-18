@@ -31,8 +31,13 @@ Rules:
 - Keep only durable facts, decisions, failures, and code changes.
 - Ignore boilerplate and repeated command noise.
 - Prefer exact file paths when available.
+- In the "concepts" field, include synonyms and related technical concepts that a developer might search for.
+- Example: if output mentions JWT tokens, include related terms like authentication, auth, session, and token rotation.
 - If this is an error, emphasize root cause and resolution clues.
 - If no useful files are present, return an empty array.
+- Only include file paths that appear verbatim in the raw output.
+- Only include facts that are explicitly stated in the raw output.
+- Never infer, extrapolate, or invent details.
 - Never use markdown fences.
 
 Tool: ${pendingMessage.toolName}

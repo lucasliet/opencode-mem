@@ -52,6 +52,8 @@ export async function generateSessionContext(
     "- memory_search: search prior observations by keyword and type.",
     "- memory_timeline: browse memories chronologically with filters.",
     "- memory_get: fetch full details for specific observation IDs.",
+    "- memory_forget: preview and delete observations by criteria.",
+    "- memory_stats: inspect memory health and usage metrics.",
     "Use memory tools when the user references prior work, asks what changed before, or when historical context could improve correctness.",
     "</memory_context>",
   ].filter(Boolean)

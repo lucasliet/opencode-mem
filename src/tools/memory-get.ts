@@ -15,7 +15,9 @@ export function createMemoryGetTool(store: MemoryStore): ToolDefinition {
     args: {
       ids: tool.schema.array(tool.schema.string()).min(1).max(10),
     },
-    async execute(args) {
+    async execute(args, context) {
+      await store.incrementToolUsage(context.sessionID, "memory_get")
+
       const observations = await store.getObservationsBatch(args.ids)
       const found = new Set(observations.map((observation) => observation.id))
       const missing = args.ids.filter((id) => !found.has(id))
@@ -37,8 +39,10 @@ export function createMemoryGetTool(store: MemoryStore): ToolDefinition {
             `## [${observation.id}] ${observation.title}`,
             `Type: ${observation.type} | Created: ${formatTimestamp(observation.createdAt)}`,
             `Tool: ${observation.toolName ?? "unknown"} | Files: ${files}`,
+            `Quality: ${observation.quality}`,
             observation.subtitle ?? "No subtitle",
             observation.narrative,
+            observation.rawFallback ? `Raw fallback:\n${observation.rawFallback}` : "",
             "Facts:",
             facts,
             `Concepts: ${observation.concepts.join(", ") || "none"}`,

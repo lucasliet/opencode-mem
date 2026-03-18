@@ -54,6 +54,8 @@ export function parseObservation(
     compressedTokenCount: estimateTokenCount(JSON.stringify(payload ?? { title, narrative })),
     toolName: pendingMessage.toolName,
     modelUsed,
+    quality: "high",
+    rawFallback: null,
     createdAt: pendingMessage.createdAt,
   }
 }

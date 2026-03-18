@@ -1,8 +1,35 @@
-import { and, desc, eq, inArray, lte, sql } from "drizzle-orm"
+import { and, desc, eq, inArray, lte, gte, sql } from "drizzle-orm"
 import type { Database } from "bun:sqlite"
-import { observations, pendingMessages, sessionSummaries, userPrompts, type ObservationRow, type PendingMessageRow, type SessionSummaryRow, type UserPromptRow } from "./schema"
+import {
+  deletionLog,
+  observations,
+  pendingMessages,
+  sessionSummaries,
+  toolUsageStats,
+  userPrompts,
+  type DeletionLogRow,
+  type ObservationRow,
+  type PendingMessageRow,
+  type SessionSummaryRow,
+  type ToolUsageStatRow,
+  type UserPromptRow,
+} from "./schema"
 import type { MemoryDatabase } from "./db"
-import type { MemorySearchResult, Observation, ObservationType, PendingMessage, PendingStatus, ProjectScope, SessionSummary, TimelinePage, TimelineQuery, UserPromptRecord } from "../types"
+import type {
+  DeletionInitiator,
+  DeletionLogEntry,
+  MemorySearchResult,
+  Observation,
+  ObservationType,
+  PendingMessage,
+  PendingStatus,
+  ProjectScope,
+  SessionSummary,
+  TimelinePage,
+  TimelineQuery,
+  ToolUsageStat,
+  UserPromptRecord,
+} from "../types"
 import { createSortableId, parseJsonValue, sanitizeFtsQuery, serializeJson } from "../utils"
 
 type MaxRow = { value: number | null }
@@ -49,6 +76,8 @@ export class MemoryStore {
       compressedTokenCount: observation.compressedTokenCount,
       toolName: observation.toolName,
       modelUsed: observation.modelUsed,
+      quality: observation.quality,
+      rawFallback: observation.rawFallback,
       createdAt: observation.createdAt,
     }).run()
   }
@@ -398,7 +427,8 @@ export class MemoryStore {
         o.subtitle,
         o.type,
         o.created_at,
-        o.tool_name
+        o.tool_name,
+        o.quality
       FROM observations_fts f
       JOIN observations o ON o.rowid = f.rowid
       WHERE observations_fts MATCH ?
@@ -419,6 +449,7 @@ export class MemoryStore {
       type: ObservationType
       created_at: number
       tool_name: string | null
+      quality: "high" | "medium" | "low"
     }>
 
     return rows.map((row) => ({
@@ -428,6 +459,7 @@ export class MemoryStore {
       type: row.type,
       createdAt: row.created_at,
       toolName: row.tool_name,
+      quality: row.quality,
     }))
   }
 
@@ -534,6 +566,492 @@ export class MemoryStore {
   }
 
   /**
+   * Deletes a set of observations by identifier.
+   *
+   * @param ids - Observation identifiers.
+   * @returns Number of deleted observations.
+   */
+  async deleteObservations(ids: string[]): Promise<number> {
+    if (!ids.length) {
+      return 0
+    }
+
+    const row = this.database.db
+      .select({ value: sql<number>`count(*)` })
+      .from(observations)
+      .where(and(eq(observations.projectId, this.scope.projectId), inArray(observations.id, ids)))
+      .get()
+
+    const count = row?.value ?? 0
+    if (!count) {
+      return 0
+    }
+
+    this.database.db
+      .delete(observations)
+      .where(and(eq(observations.projectId, this.scope.projectId), inArray(observations.id, ids)))
+      .run()
+
+    return count
+  }
+
+  /**
+   * Deletes observations that match an FTS query.
+   *
+   * @param ftsQuery - Raw user query.
+   * @returns Number of deleted observations.
+   */
+  async deleteByQuery(ftsQuery: string): Promise<number> {
+    const match = sanitizeFtsQuery(ftsQuery)
+    if (!match) {
+      return 0
+    }
+
+    const rows = this.database.sqlite
+      .query(
+        `
+          SELECT o.id
+          FROM observations_fts f
+          JOIN observations o ON o.rowid = f.rowid
+          WHERE observations_fts MATCH ?
+            AND o.project_id = ?
+        `,
+      )
+      .all(match, this.scope.projectId) as Array<{ id: string }>
+
+    return this.deleteObservations(rows.map((row) => row.id))
+  }
+
+  /**
+   * Deletes all observations and summary for a session.
+   *
+   * @param sessionId - OpenCode session identifier.
+   * @returns Number of deleted observations.
+   */
+  async deleteBySession(sessionId: string): Promise<number> {
+    const row = this.database.db
+      .select({ value: sql<number>`count(*)` })
+      .from(observations)
+      .where(and(eq(observations.projectId, this.scope.projectId), eq(observations.sessionId, sessionId)))
+      .get()
+
+    const count = row?.value ?? 0
+
+    this.database.db
+      .delete(observations)
+      .where(and(eq(observations.projectId, this.scope.projectId), eq(observations.sessionId, sessionId)))
+      .run()
+
+    this.database.db
+      .delete(sessionSummaries)
+      .where(and(eq(sessionSummaries.projectId, this.scope.projectId), eq(sessionSummaries.sessionId, sessionId)))
+      .run()
+
+    return count
+  }
+
+  /**
+   * Deletes observations created before or at a given date.
+   *
+   * @param date - Cutoff date.
+   * @returns Number of deleted observations.
+   */
+  async deleteBefore(date: Date): Promise<number> {
+    const cutoff = date.getTime()
+    if (!Number.isFinite(cutoff)) {
+      return 0
+    }
+
+    const row = this.database.db
+      .select({ value: sql<number>`count(*)` })
+      .from(observations)
+      .where(and(eq(observations.projectId, this.scope.projectId), lte(observations.createdAt, cutoff)))
+      .get()
+
+    const count = row?.value ?? 0
+    if (!count) {
+      return 0
+    }
+
+    this.database.db
+      .delete(observations)
+      .where(and(eq(observations.projectId, this.scope.projectId), lte(observations.createdAt, cutoff)))
+      .run()
+
+    return count
+  }
+
+  /**
+   * Stores a deletion audit log entry.
+   *
+   * @param criteria - JSON criteria description.
+   * @param count - Deleted observation count.
+   * @param initiator - Operation initiator.
+   * @returns A promise that resolves after insertion.
+   */
+  async logDeletion(criteria: string, count: number, initiator: DeletionInitiator): Promise<void> {
+    this.database.db.insert(deletionLog).values({
+      id: this.createId(),
+      projectId: this.scope.projectId,
+      projectRoot: this.scope.projectRoot,
+      timestamp: this.now(),
+      criteria,
+      count,
+      initiator,
+    }).run()
+  }
+
+  /**
+   * Increments tool usage counters for a session.
+   *
+   * @param sessionId - OpenCode session identifier.
+   * @param toolName - Tool name.
+   * @returns A promise that resolves after update.
+   */
+  async incrementToolUsage(sessionId: string, toolName: string): Promise<void> {
+    const existing = this.database.db
+      .select({ id: toolUsageStats.id, callCount: toolUsageStats.callCount })
+      .from(toolUsageStats)
+      .where(
+        and(
+          eq(toolUsageStats.projectId, this.scope.projectId),
+          eq(toolUsageStats.sessionId, sessionId),
+          eq(toolUsageStats.toolName, toolName),
+        ),
+      )
+      .get()
+
+    if (!existing) {
+      this.database.db.insert(toolUsageStats).values({
+        id: this.createId(),
+        projectId: this.scope.projectId,
+        projectRoot: this.scope.projectRoot,
+        sessionId,
+        toolName,
+        callCount: 1,
+        createdAt: this.now(),
+      }).run()
+      return
+    }
+
+    this.database.db
+      .update(toolUsageStats)
+      .set({
+        callCount: existing.callCount + 1,
+        createdAt: this.now(),
+      })
+      .where(eq(toolUsageStats.id, existing.id))
+      .run()
+  }
+
+  /**
+   * Retrieves tool usage stats from the last N days.
+   *
+   * @param days - Lookback window in days.
+   * @returns Matching tool usage rows.
+   */
+  async getToolUsageStats(days: number): Promise<ToolUsageStat[]> {
+    const cutoff = this.now() - Math.max(1, days) * 86_400_000
+    const rows = this.database.db
+      .select()
+      .from(toolUsageStats)
+      .where(and(eq(toolUsageStats.projectId, this.scope.projectId), gte(toolUsageStats.createdAt, cutoff)))
+      .orderBy(desc(toolUsageStats.createdAt))
+      .all()
+
+    return rows.map(mapToolUsageStat)
+  }
+
+  /**
+   * Returns observation quality distribution counts.
+   *
+   * @returns Quality counts by bucket.
+   */
+  async getQualityDistribution(): Promise<{ high: number; medium: number; low: number }> {
+    const rows = this.database.sqlite
+      .query(
+        `
+          SELECT quality, COUNT(*) AS value
+          FROM observations
+          WHERE project_id = ?
+          GROUP BY quality
+        `,
+      )
+      .all(this.scope.projectId) as Array<{ quality: string; value: number }>
+
+    const distribution = {
+      high: 0,
+      medium: 0,
+      low: 0,
+    }
+
+    for (const row of rows) {
+      if (row.quality === "high" || row.quality === "medium" || row.quality === "low") {
+        distribution[row.quality] = row.value
+      }
+    }
+
+    return distribution
+  }
+
+  /**
+   * Returns success metrics for a compression model.
+   *
+   * @param modelName - Model identifier.
+   * @returns Total, success and rate values.
+   */
+  async getModelSuccessRate(modelName: string): Promise<{ total: number; success: number; rate: number }> {
+    const totalRow = this.database.db
+      .select({ value: sql<number>`count(*)` })
+      .from(observations)
+      .where(and(eq(observations.projectId, this.scope.projectId), eq(observations.modelUsed, modelName)))
+      .get()
+
+    const successRow = this.database.db
+      .select({ value: sql<number>`count(*)` })
+      .from(observations)
+      .where(
+        and(
+          eq(observations.projectId, this.scope.projectId),
+          eq(observations.modelUsed, modelName),
+          inArray(observations.quality, ["high", "medium"]),
+        ),
+      )
+      .get()
+
+    const total = totalRow?.value ?? 0
+    const success = successRow?.value ?? 0
+
+    return {
+      total,
+      success,
+      rate: total > 0 ? success / total : 0,
+    }
+  }
+
+  /**
+   * Searches observations within a date range.
+   *
+   * @param from - Range start.
+   * @param to - Range end.
+   * @param limit - Maximum number of rows.
+   * @returns Matching observations.
+   */
+  async searchByDateRange(from: Date, to: Date, limit: number): Promise<Observation[]> {
+    const fromTimestamp = from.getTime()
+    const toTimestamp = to.getTime()
+    if (!Number.isFinite(fromTimestamp) || !Number.isFinite(toTimestamp)) {
+      return []
+    }
+
+    const start = Math.min(fromTimestamp, toTimestamp)
+    const end = Math.max(fromTimestamp, toTimestamp)
+
+    const rows = this.database.db
+      .select()
+      .from(observations)
+      .where(
+        and(
+          eq(observations.projectId, this.scope.projectId),
+          gte(observations.createdAt, start),
+          lte(observations.createdAt, end),
+        ),
+      )
+      .orderBy(desc(observations.createdAt))
+      .limit(Math.max(1, limit))
+      .all()
+
+    return rows.map(mapObservation)
+  }
+
+  /**
+   * Searches observations by matching file paths against the FTS index.
+   *
+   * @param filePaths - File path patterns.
+   * @returns Matching observations.
+   */
+  async searchByFiles(filePaths: string[]): Promise<Observation[]> {
+    const matches = filePaths
+      .map((filePath) => sanitizeFtsQuery(filePath))
+      .filter(Boolean)
+
+    if (!matches.length) {
+      return []
+    }
+
+    const matchQuery = matches.map((value) => `(${value})`).join(" OR ")
+    const rows = this.database.sqlite
+      .query(
+        `
+          SELECT o.id
+          FROM observations_fts f
+          JOIN observations o ON o.rowid = f.rowid
+          WHERE observations_fts MATCH ?
+            AND o.project_id = ?
+          ORDER BY bm25(observations_fts), o.created_at DESC
+          LIMIT 200
+        `,
+      )
+      .all(matchQuery, this.scope.projectId) as Array<{ id: string }>
+
+    return this.getObservationsBatch(rows.map((row) => row.id))
+  }
+
+  /**
+   * Returns the number of summaries for the current project.
+   *
+   * @returns Summary count.
+   */
+  async countSessionSummaries(): Promise<number> {
+    const row = this.database.db
+      .select({ value: sql<number>`count(*)` })
+      .from(sessionSummaries)
+      .where(eq(sessionSummaries.projectId, this.scope.projectId))
+      .get()
+
+    return row?.value ?? 0
+  }
+
+  /**
+   * Returns pending queue counts grouped by status.
+   *
+   * @returns Status count object.
+   */
+  async getPendingStatusCounts(): Promise<Record<PendingStatus, number>> {
+    const rows = this.database.sqlite
+      .query(
+        `
+          SELECT status, COUNT(*) AS value
+          FROM pending_messages
+          WHERE project_id = ?
+          GROUP BY status
+        `,
+      )
+      .all(this.scope.projectId) as Array<{ status: PendingStatus; value: number }>
+
+    const counts: Record<PendingStatus, number> = {
+      pending: 0,
+      processing: 0,
+      processed: 0,
+      failed: 0,
+    }
+
+    for (const row of rows) {
+      if (row.status in counts) {
+        counts[row.status] = row.value
+      }
+    }
+
+    return counts
+  }
+
+  /**
+   * Counts observations since a timestamp.
+   *
+   * @param timestamp - Lower bound timestamp.
+   * @returns Observation count.
+   */
+  async countObservationsSince(timestamp: number): Promise<number> {
+    const row = this.database.db
+      .select({ value: sql<number>`count(*)` })
+      .from(observations)
+      .where(and(eq(observations.projectId, this.scope.projectId), gte(observations.createdAt, timestamp)))
+      .get()
+
+    return row?.value ?? 0
+  }
+
+  /**
+   * Calculates compression ratio and last compression timestamp.
+   *
+   * @returns Compression summary values.
+   */
+  async getCompressionStats(): Promise<{ averageRatio: number; lastCompressedAt: number | null }> {
+    const row = this.database.sqlite
+      .query(
+        `
+          SELECT
+            AVG(CASE WHEN compressed_token_count > 0 THEN CAST(raw_token_count AS REAL) / compressed_token_count END) AS average_ratio,
+            MAX(created_at) AS last_compressed_at
+          FROM observations
+          WHERE project_id = ?
+        `,
+      )
+      .get(this.scope.projectId) as {
+      average_ratio: number | null
+      last_compressed_at: number | null
+    } | null
+
+    return {
+      averageRatio: row?.average_ratio ?? 0,
+      lastCompressedAt: row?.last_compressed_at ?? null,
+    }
+  }
+
+  /**
+   * Returns deletion log totals for a lookback window.
+   *
+   * @param days - Lookback in days.
+   * @returns Operation and deletion totals.
+   */
+  async getDeletionStats(days: number): Promise<{ operations: number; removed: number }> {
+    const cutoff = this.now() - Math.max(1, days) * 86_400_000
+    const row = this.database.sqlite
+      .query(
+        `
+          SELECT COUNT(*) AS operations, COALESCE(SUM(count), 0) AS removed
+          FROM deletion_log
+          WHERE project_id = ?
+            AND timestamp >= ?
+        `,
+      )
+      .get(this.scope.projectId, cutoff) as {
+      operations: number
+      removed: number
+    } | null
+
+    return {
+      operations: row?.operations ?? 0,
+      removed: row?.removed ?? 0,
+    }
+  }
+
+  /**
+   * Returns the current SQLite database size in bytes.
+   *
+   * @returns Database file size estimate.
+   */
+  async getDatabaseSizeBytes(): Promise<number> {
+    const row = this.database.sqlite
+      .query("SELECT page_count AS page_count, page_size AS page_size FROM pragma_page_count(), pragma_page_size()")
+      .get() as { page_count: number; page_size: number } | null
+
+    if (!row) {
+      return 0
+    }
+
+    return row.page_count * row.page_size
+  }
+
+  /**
+   * Returns deletion log entries from the last N days.
+   *
+   * @param days - Lookback window in days.
+   * @returns Matching deletion entries.
+   */
+  async getDeletionLog(days: number): Promise<DeletionLogEntry[]> {
+    const cutoff = this.now() - Math.max(1, days) * 86_400_000
+    const rows = this.database.db
+      .select()
+      .from(deletionLog)
+      .where(and(eq(deletionLog.projectId, this.scope.projectId), gte(deletionLog.timestamp, cutoff)))
+      .orderBy(desc(deletionLog.timestamp))
+      .all()
+
+    return rows.map(mapDeletionLogEntry)
+  }
+
+  /**
    * Deletes data older than the configured retention windows.
    *
    * @param retentionDays - Number of days to keep observations and prompts.
@@ -545,10 +1063,25 @@ export class MemoryStore {
     const pendingCutoff = now - 7 * 86_400_000
     const summaryCutoff = now - retentionDays * 2 * 86_400_000
 
+    const observationDeleteRow = this.database.db
+      .select({ value: sql<number>`count(*)` })
+      .from(observations)
+      .where(and(eq(observations.projectId, this.scope.projectId), lte(observations.createdAt, retentionCutoff)))
+      .get()
+    const observationDeleteCount = observationDeleteRow?.value ?? 0
+
     this.database.db
       .delete(observations)
       .where(and(eq(observations.projectId, this.scope.projectId), lte(observations.createdAt, retentionCutoff)))
       .run()
+
+    if (observationDeleteCount > 0) {
+      await this.logDeletion(
+        JSON.stringify({ type: "retention", target: "observations", before: retentionCutoff }),
+        observationDeleteCount,
+        "retention_cleanup",
+      )
+    }
 
     this.database.db
       .delete(userPrompts)
@@ -634,6 +1167,8 @@ export function mapObservation(row: ObservationRow): Observation {
     compressedTokenCount: row.compressedTokenCount,
     toolName: row.toolName ?? null,
     modelUsed: row.modelUsed ?? null,
+    quality: (row.quality as Observation["quality"]) ?? "high",
+    rawFallback: row.rawFallback ?? null,
     createdAt: row.createdAt,
   }
 }
@@ -699,6 +1234,42 @@ export function mapUserPrompt(row: UserPromptRow): UserPromptRecord {
     sessionId: row.sessionId,
     messageId: row.messageId,
     content: row.content,
+    createdAt: row.createdAt,
+  }
+}
+
+/**
+ * Maps a deletion log row into the runtime shape.
+ *
+ * @param row - Database row.
+ * @returns Normalized deletion log entry.
+ */
+export function mapDeletionLogEntry(row: DeletionLogRow): DeletionLogEntry {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    projectRoot: row.projectRoot,
+    timestamp: row.timestamp,
+    criteria: row.criteria,
+    count: row.count,
+    initiator: row.initiator as DeletionInitiator,
+  }
+}
+
+/**
+ * Maps a tool usage stats row into the runtime shape.
+ *
+ * @param row - Database row.
+ * @returns Normalized tool usage stats entry.
+ */
+export function mapToolUsageStat(row: ToolUsageStatRow): ToolUsageStat {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    projectRoot: row.projectRoot,
+    sessionId: row.sessionId,
+    toolName: row.toolName,
+    callCount: row.callCount,
     createdAt: row.createdAt,
   }
 }

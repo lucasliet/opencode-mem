@@ -34,11 +34,9 @@ const DEFAULT_CONFIG: Omit<PluginConfig, "configPaths"> = {
  * @returns The merged plugin configuration.
  */
 export async function loadConfig(input: {
-  client: OpencodeClient
   directory: string
   worktree: string
 }): Promise<PluginConfig> {
-  const runtimeConfig = await loadOpenCodeConfig(input.client, input.directory)
   const configPaths = await findConfigPaths(input.worktree)
   const fileConfig = await loadConfigFiles(configPaths)
   const envConfig = loadEnvironmentConfig()
@@ -46,7 +44,7 @@ export async function loadConfig(input: {
     ...DEFAULT_CONFIG,
     ...compactConfig(fileConfig),
     ...compactConfig(envConfig),
-  }, runtimeConfig)
+  })
 
   await ensureParentDirectory(config.dbPath)
 
@@ -196,7 +194,7 @@ export function compactConfig(value: PartialPluginConfig): PartialPluginConfig {
  */
 export function normalizeConfig(
   value: PartialPluginConfig,
-  runtimeConfig: Config,
+  runtimeConfig: Config = {},
 ): Omit<PluginConfig, "configPaths"> {
   const rawDbPath = value.dbPath ?? DEFAULT_CONFIG.dbPath
   const resolvedDbPath = resolveHomePath(rawDbPath)

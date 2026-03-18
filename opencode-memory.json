@@ -1,0 +1,19 @@
+{
+  "dbPath": "~/.config/opencode/memory/memory.db",
+  "indexSize": 50,
+  "sampleSize": 5,
+  "maxPendingRetries": 3,
+  "compressionModel": null,
+  "maxRawContentSize": 50000,
+  "enableSemanticSearch": false,
+  "privacyStrip": true,
+  "minContentLength": 100,
+  "compressionBatchSize": 10,
+  "retentionDays": 90,
+  "contextMaxTokens": 2000,
+  "summaryLookback": 3,
+  "orphanThresholdMs": 300000,
+  "queuePollIntervalMs": 250,
+  "sessionSummaryDebounceMs": 1500,
+  "logLevel": "info"
+}

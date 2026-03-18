@@ -5,9 +5,15 @@ export const OBSERVATION_TYPES = ["tool_output", "file_change", "error", "decisi
 
 export const PENDING_STATUSES = ["pending", "processing", "processed", "failed"] as const
 
+export const OBSERVATION_QUALITIES = ["high", "medium", "low"] as const
+
 export type ObservationType = (typeof OBSERVATION_TYPES)[number]
 
 export type PendingStatus = (typeof PENDING_STATUSES)[number]
+
+export type ObservationQuality = (typeof OBSERVATION_QUALITIES)[number]
+
+export type DeletionInitiator = "user" | "retention_cleanup"
 
 export type LogLevel = "debug" | "info" | "warn" | "error"
 
@@ -60,7 +66,14 @@ export interface Observation {
   compressedTokenCount: number
   toolName: string | null
   modelUsed: string | null
+  quality: ObservationQuality
+  rawFallback: string | null
   createdAt: number
+}
+
+export interface QualityResult {
+  quality: ObservationQuality
+  flags: string[]
 }
 
 export interface PendingMessage {
@@ -104,6 +117,26 @@ export interface UserPromptRecord {
   createdAt: number
 }
 
+export interface DeletionLogEntry {
+  id: string
+  projectId: string
+  projectRoot: string
+  timestamp: number
+  criteria: string
+  count: number
+  initiator: DeletionInitiator
+}
+
+export interface ToolUsageStat {
+  id: string
+  projectId: string
+  projectRoot: string
+  sessionId: string
+  toolName: string
+  callCount: number
+  createdAt: number
+}
+
 export interface MemorySearchResult {
   id: string
   title: string
@@ -111,6 +144,7 @@ export interface MemorySearchResult {
   type: ObservationType
   createdAt: number
   toolName: string | null
+  quality: ObservationQuality
 }
 
 export interface TimelineQuery {

@@ -18,12 +18,15 @@ export const observations = sqliteTable(
     compressedTokenCount: integer("compressed_token_count").notNull().default(0),
     toolName: text("tool_name"),
     modelUsed: text("model_used"),
+    quality: text("quality").notNull().default("high"),
+    rawFallback: text("raw_fallback"),
     createdAt: integer("created_at").notNull(),
   },
   (table) => [
     index("observations_project_created_idx").on(table.projectId, table.createdAt),
     index("observations_session_idx").on(table.sessionId),
     index("observations_type_idx").on(table.type),
+    index("observations_quality_idx").on(table.quality),
   ],
 )
 
@@ -89,10 +92,40 @@ export const userPrompts = sqliteTable(
   ],
 )
 
+export const deletionLog = sqliteTable(
+  "deletion_log",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    projectRoot: text("project_root").notNull(),
+    timestamp: integer("timestamp").notNull(),
+    criteria: text("criteria").notNull(),
+    count: integer("count").notNull(),
+    initiator: text("initiator").notNull(),
+  },
+  (table) => [index("deletion_log_timestamp_idx").on(table.projectId, table.timestamp)],
+)
+
+export const toolUsageStats = sqliteTable(
+  "tool_usage_stats",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    projectRoot: text("project_root").notNull(),
+    sessionId: text("session_id").notNull(),
+    toolName: text("tool_name").notNull(),
+    callCount: integer("call_count").notNull().default(1),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [index("tool_usage_stats_session_tool_idx").on(table.projectId, table.sessionId, table.toolName)],
+)
+
 export const schema = {
+  deletionLog,
   observations,
   pendingMessages,
   sessionSummaries,
+  toolUsageStats,
   userPrompts,
 }
 
@@ -101,5 +134,9 @@ export type ObservationRow = typeof observations.$inferSelect
 export type PendingMessageRow = typeof pendingMessages.$inferSelect
 
 export type SessionSummaryRow = typeof sessionSummaries.$inferSelect
+
+export type DeletionLogRow = typeof deletionLog.$inferSelect
+
+export type ToolUsageStatRow = typeof toolUsageStats.$inferSelect
 
 export type UserPromptRow = typeof userPrompts.$inferSelect
