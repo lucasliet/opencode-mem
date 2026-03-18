@@ -6,6 +6,9 @@ import type { PluginConfig, ProjectScope, RuntimeState } from "../types"
 import { isProbablyBinary, normalizeWhitespace } from "../utils"
 import { stripSensitiveTokens } from "../compression/privacy"
 
+const IGNORED_TOOL_PREFIXES = ["memory_"]
+const IGNORED_TOOL_NAMES = new Set(["todowrite"])
+
 /**
  * Creates the hook that captures tool outputs and enqueues them for compression.
  *
@@ -29,6 +32,10 @@ export function createToolExecuteAfterHook(
 ): NonNullable<Hooks["tool.execute.after"]> {
   return async (input, output) => {
     if (state.internalSessionIds.has(input.sessionID)) {
+      return
+    }
+
+    if (shouldIgnoreTool(input.tool)) {
       return
     }
 
@@ -84,4 +91,18 @@ export function createToolExecuteAfterHook(
       })
     }
   }
+}
+
+/**
+ * Checks whether a tool output should be skipped from persistent memory capture.
+ *
+ * @param toolName - Executed tool name.
+ * @returns True when the tool is intentionally ignored.
+ */
+export function shouldIgnoreTool(toolName: string): boolean {
+  if (IGNORED_TOOL_NAMES.has(toolName)) {
+    return true
+  }
+
+  return IGNORED_TOOL_PREFIXES.some((prefix) => toolName.startsWith(prefix))
 }

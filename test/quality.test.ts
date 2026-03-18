@@ -71,4 +71,17 @@ describe("quality gate", () => {
     const result = validateObservation(observation, raw)
     expect(result.flags.some((flag) => flag.startsWith("hallucinated_path:"))).toBe(true)
   })
+
+  test("shouldAcceptMultiWordConceptsWhenKeyTermsExistInRawContent", () => {
+    const observation = createObservation({
+      title: "Captura saída de ferramentas",
+      facts: ["Implementa função createToolExecuteAfterHook para registrar outputs"],
+      concepts: ["tool output capture", "privacy stripping", "binary detection"],
+      filesInvolved: ["src/hooks/tool-after.ts"],
+    })
+    const raw = "export function createToolExecuteAfterHook() { const rawOutput = output.output ?? \"\"; if (isProbablyBinary(rawOutput)) { const content = stripSensitiveTokens(rawOutput) } } src/hooks/tool-after.ts"
+
+    const result = validateObservation(observation, raw)
+    expect(result.quality).toBe("medium")
+  })
 })
