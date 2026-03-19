@@ -78,7 +78,7 @@ cd ~/.config/opencode && bun add /Users/lucas/opencode-mem
 
 In `~/.config/opencode/opencode.json`:
 ```json
-"plugin": ["@opencode-ai/plugin-memory"]
+"plugin": ["opencode-memory-plugin"]
 ```
 
 **After every source change**, rebuild and restart OpenCode:

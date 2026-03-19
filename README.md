@@ -1,4 +1,4 @@
-# @opencode-ai/plugin-memory
+# opencode-memory-plugin
 
 Persistent cross-session memory plugin for OpenCode, designed as a port of claude-mem to OpenCode according to the DAQ in this repository.
 
@@ -14,7 +14,7 @@ Persistent cross-session memory plugin for OpenCode, designed as a port of claud
 ## Install
 
 ```bash
-bun add @opencode-ai/plugin-memory
+bun add opencode-memory-plugin
 ```
 
 Add in `opencode.json`:
@@ -22,7 +22,7 @@ Add in `opencode.json`:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@opencode-ai/plugin-memory"]
+  "plugin": ["opencode-memory-plugin"]
 }
 ```
 

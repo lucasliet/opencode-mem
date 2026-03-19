@@ -1,5 +1,5 @@
 {
-  "name": "@opencode-ai/plugin-memory",
+  "name": "opencode-memory-plugin",
   "version": "0.1.0",
   "description": "Persistent cross-session memory plugin for OpenCode",
   "type": "module",
@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.2.27",
-    "@opencode-ai/plugin-memory": ".",
+    "opencode-memory-plugin": ".",
     "@opencode-ai/sdk": "^1.2.27",
     "ai": "^5.0.0",
     "drizzle-orm": "^0.44.6",

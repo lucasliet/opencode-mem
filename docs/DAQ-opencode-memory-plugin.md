@@ -1,6 +1,6 @@
 # DAQ — Documento de Arquitetura e Qualidade
 ## Plugin de Memória Persistente Cross-Session para OpenCode
-### Portabilidade do claude-mem → `@opencode-ai/plugin-memory`
+### Portabilidade do claude-mem → `opencode-memory-plugin`
 
 **Versão:** 1.1.0  
 **Data:** 2026-03-18  
@@ -83,7 +83,7 @@ Mapeamento final (OpenCode SDK v1.2.x):
 
 ```text
 OpenCode Server (Bun)
-└─ @opencode-ai/plugin-memory
+└─ opencode-memory-plugin
    ├─ Hooks
    │  ├─ tool.execute.after
    │  ├─ experimental.chat.system.transform
@@ -263,7 +263,7 @@ Razão: evitar deadlock do OpenCode enquanto aguarda o retorno da definição do
 
 ```json
 {
-  "plugin": ["@opencode-ai/plugin-memory"]
+  "plugin": ["opencode-memory-plugin"]
 }
 ```
 
