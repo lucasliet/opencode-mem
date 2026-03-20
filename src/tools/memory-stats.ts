@@ -7,11 +7,10 @@ import type { PluginConfig } from "../types"
  * Creates the readonly memory statistics tool.
  *
  * @param store - Memory store.
- * @param config - Plugin configuration.
  * @param now - Clock function.
  * @returns Tool definition.
  */
-export function createMemoryStatsTool(store: MemoryStore, config: PluginConfig, now: () => number): ToolDefinition {
+export function createMemoryStatsTool(store: MemoryStore, now: () => number): ToolDefinition {
   return tool({
     description:
       "Show memory plugin statistics including observation counts, quality distribution, queue status, deletion activity, and tool usage.",
@@ -72,9 +71,6 @@ export function createMemoryStatsTool(store: MemoryStore, config: PluginConfig, 
         `Deletions (last 30d): ${deletionStats.operations} operations, ${deletionStats.removed} observations removed`,
         `Last compression: ${lastCompression}`,
         embeddingStats.vectorError ? `Vector backend note: ${embeddingStats.vectorError}` : null,
-        `Vector enabled raw: ${vectorState.enabled}`,
-        `Config paths: ${JSON.stringify(config.configPaths ?? [])}`,
-        `Config enableSemanticSearch: ${config.enableSemanticSearch}`,
       ].filter((value): value is string => Boolean(value)).join("\n")
     },
   })

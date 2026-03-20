@@ -92,7 +92,7 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
         memory_timeline: createMemoryTimelineTool(store),
         memory_get: createMemoryGetTool(store),
         memory_forget: createMemoryForgetTool(store, now),
-        memory_stats: createMemoryStatsTool(store, pluginConfig, now),
+        memory_stats: createMemoryStatsTool(store, now),
       },
       event: createEventHook(pipeline, pluginConfig, state, logger),
       "chat.message": createChatMessageHook(store, scope, state, now),
