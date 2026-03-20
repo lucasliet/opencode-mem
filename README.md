@@ -51,7 +51,7 @@ Example:
   "compressionModel": null,
   "maxRawContentSize": 50000,
   "privacyStrip": true,
-  "enableSemanticSearch": false,
+  "enableSemanticSearch": true,
   "embeddingModel": "Xenova/all-MiniLM-L6-v2",
   "embeddingDimensions": 384,
   "semanticSearchMaxResults": 8,
@@ -64,7 +64,7 @@ Example:
 }
 ```
 
-Semantic search remains disabled by default. When enabled, the plugin keeps FTS5 as the lexical base and uses local-only embeddings plus `sqlite-vec` as the preferred semantic layer. If native vector loading is unavailable in the current Bun runtime, the plugin falls back to semantic reranking in JavaScript over persisted embeddings while preserving the same public behavior.
+Semantic search is enabled by default. The plugin keeps FTS5 as the lexical base and uses local-only embeddings (`@huggingface/transformers`) plus `sqlite-vec` as the preferred semantic layer. If native vector loading is unavailable in the current Bun runtime, the plugin falls back to semantic reranking in JavaScript over persisted embeddings while preserving the same public behavior.
 
 ## Development
 
