@@ -1,4 +1,4 @@
-import type { PendingMessage, PluginConfig, SessionSummary } from "../types"
+import type { Observation, PendingMessage, PluginConfig, SessionSummary } from "../types"
 import { buildCompressionPrompt, buildSessionSummaryPrompt } from "./prompts"
 import { parseObservation, parseSessionSummary } from "./parser"
 import { validateObservation } from "./quality"
@@ -7,7 +7,8 @@ import { MemoryStore } from "../storage/store"
 import { MemoryLogger } from "../logger"
 import { selectCompressionModel } from "../config"
 import type { Config, OpencodeClient } from "@opencode-ai/sdk"
-import type { ObservationCompressor } from "../types"
+import type { EmbeddingProvider, ObservationCompressor, ObservationEmbedding } from "../types"
+import { buildObservationEmbeddingText } from "../embeddings/text"
 
 /**
  * Processes queued tool outputs and turns them into persistent observations.
@@ -21,6 +22,7 @@ export class CompressionPipeline {
     private readonly client: OpencodeClient,
     private readonly directory: string,
     private readonly pluginConfig: PluginConfig,
+    private readonly embeddingProvider: EmbeddingProvider | null,
     private readonly logger: MemoryLogger,
     private readonly now: () => number,
   ) {}
@@ -156,6 +158,7 @@ export class CompressionPipeline {
         : null
       await this.store.saveObservation(observation)
       await this.store.updatePendingStatus(pendingMessage.id, "processed", pendingMessage.retryCount, null)
+      await this.persistObservationEmbedding(observation)
 
       await this.logger.info("Compressed memory observation", {
         sessionId: pendingMessage.sessionId,
@@ -201,6 +204,44 @@ export class CompressionPipeline {
   private async loadRuntimeConfig(): Promise<Config> {
     const result = await this.client.config.get({ query: { directory: this.directory } })
     return result.data ?? {}
+  }
+
+  /**
+   * Generates and stores a local embedding for a persisted observation.
+   *
+   * @param observation - Persisted observation.
+   * @returns A promise that resolves after the embedding attempt finishes.
+   */
+  private async persistObservationEmbedding(observation: Observation): Promise<void> {
+    if (!this.pluginConfig.enableSemanticSearch || !this.embeddingProvider) {
+      return
+    }
+
+    const embeddingInput = buildObservationEmbeddingText(observation)
+    if (!embeddingInput) {
+      return
+    }
+
+    try {
+      const vector = await this.embeddingProvider.embed(embeddingInput)
+      const timestamp = this.now()
+      const embedding: ObservationEmbedding = {
+        observationId: observation.id,
+        projectId: observation.projectId,
+        embeddingModel: this.embeddingProvider.getModel(),
+        embeddingDimensions: this.embeddingProvider.getDimensions(),
+        embeddingInput,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }
+
+      await this.store.saveObservationEmbedding(embedding, observation, vector)
+    } catch (error) {
+      await this.logger.warn("Failed to generate memory embedding", {
+        observationId: observation.id,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   /**

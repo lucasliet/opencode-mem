@@ -9,22 +9,23 @@ Source layout:
 - `src/config.ts` — config loading from filesystem and env vars (no SDK API calls)
 - `src/utils.ts` — pure utility functions (no side effects)
 - `src/logger.ts` — `MemoryLogger` wrapping `client.app.log`
-- `src/storage/schema.ts` — Drizzle table definitions (6 tables)
-- `src/storage/db.ts` — SQLite init, WAL mode, FTS5 virtual table and triggers
-- `src/storage/store.ts` — `MemoryStore` class with all CRUD, search, deletion, and stats methods
+- `src/storage/schema.ts` — Drizzle table definitions for textual memory and vector metadata
+- `src/storage/db.ts` — SQLite init, WAL mode, FTS5 virtual table/triggers, and `sqlite-vec` availability handling
+- `src/storage/store.ts` — `MemoryStore` class with CRUD, hybrid search, deletion, and stats methods
 - `src/compression/privacy.ts` — `stripSensitiveTokens()`
 - `src/compression/prompts.ts` — compression and session summary prompt builders
 - `src/compression/parser.ts` — `parseObservation()` and `parseSessionSummary()` with fallback
 - `src/compression/quality.ts` — `validateObservation()` quality gate (high/medium/low)
-- `src/compression/pipeline.ts` — `CompressionPipeline` with queue, retry, and orphan recovery
+- `src/compression/pipeline.ts` — `CompressionPipeline` with queue, retry, orphan recovery, and post-persist embedding stage
 - `src/compression/compressor.ts` — `LanguageModelObservationCompressor` and `SessionPromptObservationCompressor`
+- `src/embeddings/` — local embedding provider, text builder, and embedding contracts
 - `src/hooks/tool-after.ts` — captures tool outputs via `tool.execute.after`
 - `src/hooks/system-transform.ts` — injects memory context via `experimental.chat.system.transform`
 - `src/hooks/events.ts` — session lifecycle via `event`, debounced summaries, shutdown
 - `src/hooks/chat-message.ts` — captures user prompts via `chat.message`
 - `src/hooks/compaction.ts` — memory anchors via `experimental.session.compacting`
-- `src/context/generator.ts` — `generateSessionContext()` and `generateCompactionContext()`
-- `src/tools/memory-search.ts` — FTS5 keyword search with low-quality `[?]` marker
+- `src/context/generator.ts` — `generateSessionContext()` and `generateCompactionContext()` with conservative semantic enrichment
+- `src/tools/memory-search.ts` — hybrid memory search with low-quality `[?]` marker
 - `src/tools/memory-timeline.ts` — chronological browsing with cursor pagination
 - `src/tools/memory-get.ts` — full observation fetch by IDs with `rawFallback` display
 - `src/tools/memory-forget.ts` — deletion with preview (`confirm=false`) / execute (`confirm=true`)
@@ -33,7 +34,7 @@ Source layout:
 ## Build, Test, and Development Commands
 Run `bun install` to install dependencies. Use `bun run typecheck` to validate both app and test TypeScript configs without emitting files. Use `bun test` to run the Bun test suite in `test/`. Use `bun run build` to compile the package into `dist/` with `tsc -p tsconfig.json`. For a clean contributor loop, prefer: `bun run typecheck && bun test && bun run build`.
 
-Current test coverage: 34 tests across 6 files (`config`, `parser`, `privacy`, `quality`, `store`, `pipeline`).
+Current test coverage should continue to prioritize `config`, `parser`, `privacy`, `quality`, `store`, `pipeline`, and any new hybrid/context behavior.
 
 ## Coding Style & Naming Conventions
 This package uses ESM TypeScript with 2-space indentation, semicolon-free style, and named exports. Follow the existing patterns: factory functions use `createX` names, classes use PascalCase, and tests use `should...` style names such as `shouldParseValidJsonObservation`. Keep files focused by domain and place new code in the matching module folder instead of growing `index.ts`. Add TSDoc to authored functions and keep code self-explanatory without inline comments unless absolutely necessary.
@@ -101,4 +102,6 @@ Six SQLite tables (all project-scoped via `project_id`):
 
 FTS5 virtual table `observations_fts` indexes: `title`, `subtitle`, `narrative`, `facts`, `concepts`, `files_involved`. Sync maintained via `AFTER INSERT/DELETE/UPDATE` triggers.
 
-New databases get all columns inline via `CREATE TABLE`. Existing databases from before the `quality`/`raw_fallback` additions are migrated by `ensureSchema()` via `ALTER TABLE ... ADD COLUMN` with try/catch.
+Hybrid memory architecture keeps FTS5 mandatory for lexical retrieval, deletion governance, and fallback. `sqlite-vec` is the preferred local vector backend for semantic retrieval, but the plugin must degrade cleanly when native extension loading is unavailable in Bun. In that case, keep embeddings persisted locally and use a JavaScript semantic fallback instead of breaking retrieval.
+
+New databases get all columns inline via `CREATE TABLE`. Existing databases from before the `quality`/`raw_fallback` additions are migrated by `ensureSchema()` via `ALTER TABLE ... ADD COLUMN` with try/catch. Any vector-layer rollout must preserve this pattern: safe startup, idempotent migration, and no plugin-init dependence on remote services or SDK calls.

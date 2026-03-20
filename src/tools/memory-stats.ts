@@ -1,15 +1,17 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin"
 import { MemoryStore } from "../storage/store"
 import { formatRelativeTime } from "../utils"
+import type { PluginConfig } from "../types"
 
 /**
  * Creates the readonly memory statistics tool.
  *
  * @param store - Memory store.
+ * @param config - Plugin configuration.
  * @param now - Clock function.
  * @returns Tool definition.
  */
-export function createMemoryStatsTool(store: MemoryStore, now: () => number): ToolDefinition {
+export function createMemoryStatsTool(store: MemoryStore, config: PluginConfig, now: () => number): ToolDefinition {
   return tool({
     description:
       "Show memory plugin statistics including observation counts, quality distribution, queue status, deletion activity, and tool usage.",
@@ -24,6 +26,7 @@ export function createMemoryStatsTool(store: MemoryStore, now: () => number): To
         pendingCounts,
         qualityDistribution,
         compression,
+        embeddingStats,
         toolUsage,
         deletionStats,
         dbSize,
@@ -34,6 +37,7 @@ export function createMemoryStatsTool(store: MemoryStore, now: () => number): To
         store.getPendingStatusCounts(),
         store.getQualityDistribution(),
         store.getCompressionStats(),
+        store.getEmbeddingStats(),
         store.getToolUsageStats(7),
         store.getDeletionStats(30),
         store.getDatabaseSizeBytes(),
@@ -47,9 +51,12 @@ export function createMemoryStatsTool(store: MemoryStore, now: () => number): To
 
       const toolCounts = summarizeToolUsage(toolUsage)
       const compressionRatio = compression.averageRatio > 0 ? `${compression.averageRatio.toFixed(1)}:1` : "n/a"
+      const embeddingCoverage = percentage(embeddingStats.totalEmbeddings, totalObservations)
       const lastCompression = compression.lastCompressedAt
         ? formatRelativeTime(compression.lastCompressedAt, now)
         : "never"
+
+      const vectorState = await store.getVectorBackendState()
 
       return [
         `Observations: ${totalObservations} (last 24h: ${observations24h}, low-quality: ${lowQuality})`,
@@ -57,11 +64,18 @@ export function createMemoryStatsTool(store: MemoryStore, now: () => number): To
         `Pending messages: ${pendingCounts.pending} pending, ${pendingCounts.processing} processing, ${pendingCounts.failed} failed`,
         `Database size: ${formatBytes(dbSize)}`,
         `Avg compression ratio: ${compressionRatio}`,
+        `Semantic search: ${embeddingStats.semanticEnabled ? "enabled" : "disabled"}`,
+        `Embeddings: ${embeddingStats.totalEmbeddings} (${embeddingCoverage}% coverage, backend ${embeddingStats.backendMode})`,
+        `Embedding model: ${embeddingStats.model ?? "n/a"} (${embeddingStats.dimensions ?? 0} dims)`,
         `Quality: ${highPct}% high, ${mediumPct}% medium, ${lowPct}% low`,
         `Tool usage (last 7d): search ${toolCounts.search}, timeline ${toolCounts.timeline}, get ${toolCounts.get}, forget ${toolCounts.forget}, stats ${toolCounts.stats}`,
         `Deletions (last 30d): ${deletionStats.operations} operations, ${deletionStats.removed} observations removed`,
         `Last compression: ${lastCompression}`,
-      ].join("\n")
+        embeddingStats.vectorError ? `Vector backend note: ${embeddingStats.vectorError}` : null,
+        `Vector enabled raw: ${vectorState.enabled}`,
+        `Config paths: ${JSON.stringify(config.configPaths ?? [])}`,
+        `Config enableSemanticSearch: ${config.enableSemanticSearch}`,
+      ].filter((value): value is string => Boolean(value)).join("\n")
     },
   })
 }

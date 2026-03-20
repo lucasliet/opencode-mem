@@ -1,19 +1,24 @@
 import { formatSummaryBlock } from "../compression/prompts"
+import { buildSemanticQueryText } from "../embeddings/text"
 import { MemoryStore } from "../storage/store"
-import type { PluginConfig } from "../types"
+import type { EmbeddingProvider, PluginConfig } from "../types"
 import { formatRelativeTime, normalizeWhitespace } from "../utils"
 
 /**
  * Generates the memory context injected into the system prompt.
  *
  * @param store - Memory store.
+ * @param sessionId - Active OpenCode session identifier.
  * @param config - Plugin configuration.
+ * @param embeddingProvider - Optional local embedding provider.
  * @param now - Clock function.
  * @returns A context block or an empty string.
  */
 export async function generateSessionContext(
   store: MemoryStore,
+  sessionId: string,
   config: PluginConfig,
+  embeddingProvider: EmbeddingProvider | null,
   now: () => number,
 ): Promise<string> {
   const recentObservations = await store.getRecentObservations(config.indexSize)
@@ -22,6 +27,7 @@ export async function generateSessionContext(
   }
 
   const summaries = await store.getRecentSummaries(config.summaryLookback)
+  const semanticObservations = await getSemanticContextObservations(store, sessionId, config, embeddingProvider)
   const indexLines = recentObservations.map(
     (observation) =>
       `- [${observation.id}] ${observation.title} — ${observation.subtitle ?? "No subtitle"} (${observation.type}, ${formatRelativeTime(observation.createdAt, now)})`,
@@ -37,6 +43,16 @@ export async function generateSessionContext(
     ? `## Recent Session Summaries\n${formatSummaryBlock(summaries)}`
     : ""
 
+  const semanticBlock = semanticObservations.length
+    ? [
+      "## Semantically Relevant Observations",
+      ...semanticObservations.map(
+        (observation) =>
+          `- [${observation.id}] ${observation.title} — ${observation.subtitle ?? "No subtitle"} (${observation.type}, ${formatRelativeTime(observation.createdAt, now)})`,
+      ),
+    ].join("\n")
+    : ""
+
   const sections = [
     "<memory_context>",
     "You have access to persistent memory from previous OpenCode sessions for this project.",
@@ -44,8 +60,11 @@ export async function generateSessionContext(
     `## Recent Observation Index (${recentObservations.length} entries)`,
     indexLines.join("\n"),
     "",
-    "## Detailed Recent Observations",
+    detailedSamples.length
+      ? "## Detailed Recent Observations"
+      : "",
     detailedSamples.join("\n\n"),
+    semanticBlock,
     summaryBlock,
     "",
     "## Available Memory Tools",
@@ -59,6 +78,43 @@ export async function generateSessionContext(
   ].filter(Boolean)
 
   return truncateToBudget(sections.join("\n"), config.contextMaxTokens)
+}
+
+/**
+ * Retrieves a conservative semantic sample for automatic context injection.
+ *
+ * @param store - Memory store.
+ * @param sessionId - Active OpenCode session identifier.
+ * @param config - Plugin configuration.
+ * @param embeddingProvider - Optional local embedding provider.
+ * @returns Compact semantically relevant observations.
+ */
+async function getSemanticContextObservations(
+  store: MemoryStore,
+  sessionId: string,
+  config: PluginConfig,
+  embeddingProvider: EmbeddingProvider | null,
+) {
+  if (!config.enableSemanticSearch || !embeddingProvider || config.semanticContextMaxResults <= 0) {
+    return []
+  }
+
+  const prompt = await store.getLatestUserPrompt(sessionId)
+  if (!prompt) {
+    return []
+  }
+
+  try {
+    const embedding = await embeddingProvider.embed(buildSemanticQueryText(prompt))
+    return store.searchSemantic(embedding, {
+      limit: config.semanticContextMaxResults,
+      semanticLimit: config.semanticContextMaxResults,
+      semanticMinScore: config.semanticMinScore,
+      hybridSearchAlpha: config.hybridSearchAlpha,
+    })
+  } catch {
+    return []
+  }
 }
 
 /**

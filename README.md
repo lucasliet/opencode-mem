@@ -2,9 +2,10 @@
 
 Persistent cross-session memory plugin for OpenCode, designed as a port of claude-mem to OpenCode according to the DAQ in this repository.
 
-## MVP Scope
+## Current Scope
 
 - Local persistence in SQLite with FTS5 index
+- Hybrid-ready architecture for `FTS5 + sqlite-vec`
 - Crash-safe pending queue for tool outputs
 - Async AI compression pipeline (in-process)
 - Session summaries
@@ -50,11 +51,20 @@ Example:
   "compressionModel": null,
   "maxRawContentSize": 50000,
   "privacyStrip": true,
+  "enableSemanticSearch": false,
+  "embeddingModel": "Xenova/all-MiniLM-L6-v2",
+  "embeddingDimensions": 384,
+  "semanticSearchMaxResults": 8,
+  "semanticContextMaxResults": 3,
+  "semanticMinScore": 0.55,
+  "hybridSearchAlpha": 0.65,
   "compressionBatchSize": 10,
   "retentionDays": 90,
   "logLevel": "info"
 }
 ```
+
+Semantic search remains disabled by default. When enabled, the plugin keeps FTS5 as the lexical base and uses local-only embeddings plus `sqlite-vec` as the preferred semantic layer. If native vector loading is unavailable in the current Bun runtime, the plugin falls back to semantic reranking in JavaScript over persisted embeddings while preserving the same public behavior.
 
 ## Development
 
@@ -68,6 +78,7 @@ bun run build
 ## Notes
 
 - This package targets OpenCode plugin APIs currently exposed by `@opencode-ai/plugin@1.2.x`.
+- The architecture DAQ in `docs/DAQ-opencode-memory-plugin.md` is the source of truth for the hybrid rollout.
 - DAQ legacy naming (`beforePrompt`, `afterResponse`) is mapped in this implementation to:
   - `tool.execute.after` for capture
   - `experimental.chat.system.transform` for injection

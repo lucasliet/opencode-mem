@@ -2,7 +2,36 @@ import { describe, expect, test } from "bun:test"
 import { createMemoryForgetTool } from "../src/tools/memory-forget"
 import { createMemoryDatabase } from "../src/storage/db"
 import { MemoryStore } from "../src/storage/store"
-import type { Observation, ProjectScope } from "../src/types"
+import type { Observation, PluginConfig, ProjectScope } from "../src/types"
+
+function createPluginConfig(): PluginConfig {
+  return {
+    dbPath: ":memory:",
+    indexSize: 50,
+    sampleSize: 5,
+    maxPendingRetries: 3,
+    compressionModel: null,
+    maxRawContentSize: 50_000,
+    enableSemanticSearch: false,
+    embeddingModel: "Xenova/all-MiniLM-L6-v2",
+    embeddingDimensions: 384,
+    semanticSearchMaxResults: 8,
+    semanticContextMaxResults: 3,
+    semanticMinScore: 0.55,
+    hybridSearchAlpha: 0.65,
+    privacyStrip: true,
+    minContentLength: 100,
+    compressionBatchSize: 10,
+    retentionDays: 90,
+    contextMaxTokens: 2_000,
+    summaryLookback: 3,
+    orphanThresholdMs: 5 * 60_000,
+    queuePollIntervalMs: 250,
+    sessionSummaryDebounceMs: 1_500,
+    logLevel: "error",
+    configPaths: [],
+  }
+}
 
 function createScope(): ProjectScope {
   return {
@@ -67,7 +96,7 @@ describe("memory_forget tool", () => {
   test("shouldRequireConfirmationTokenWhenConfirmingDeletion", async () => {
     let nowValue = 10_000
     const now = () => nowValue
-    const database = await createMemoryDatabase(":memory:")
+    const database = await createMemoryDatabase(createPluginConfig())
     const store = new MemoryStore(database, createScope(), now)
     await store.saveObservation(createObservation({ id: "obs_1", createdAt: 9_000 }))
 
@@ -87,7 +116,7 @@ describe("memory_forget tool", () => {
   test("shouldBlockDeletionOnSameTurnAsPreview", async () => {
     let nowValue = 10_000
     const now = () => nowValue
-    const database = await createMemoryDatabase(":memory:")
+    const database = await createMemoryDatabase(createPluginConfig())
     const store = new MemoryStore(database, createScope(), now)
     await store.saveObservation(createObservation({ id: "obs_1", createdAt: 9_000 }))
 
@@ -118,7 +147,7 @@ describe("memory_forget tool", () => {
   test("shouldDeleteAfterPreviewWhenConfirmedOnLaterTurn", async () => {
     let nowValue = 10_000
     const now = () => nowValue
-    const database = await createMemoryDatabase(":memory:")
+    const database = await createMemoryDatabase(createPluginConfig())
     const store = new MemoryStore(database, createScope(), now)
     await store.saveObservation(createObservation({ id: "obs_1", createdAt: 9_000 }))
     await store.saveObservation(createObservation({ id: "obs_2", title: "Database migration", concepts: ["sqlite"], createdAt: 8_000 }))
@@ -152,7 +181,7 @@ describe("memory_forget tool", () => {
   test("shouldBlockDeletionWhenCriteriaDoNotMatchPreview", async () => {
     let nowValue = 10_000
     const now = () => nowValue
-    const database = await createMemoryDatabase(":memory:")
+    const database = await createMemoryDatabase(createPluginConfig())
     const store = new MemoryStore(database, createScope(), now)
     await store.saveObservation(createObservation({ id: "obs_1", createdAt: 9_000 }))
 

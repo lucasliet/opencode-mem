@@ -7,6 +7,7 @@ import { createEventHook, registerShutdown } from "./hooks/events"
 import { createChatMessageHook } from "./hooks/chat-message"
 import { createSystemTransformHook } from "./hooks/system-transform"
 import { createToolExecuteAfterHook } from "./hooks/tool-after"
+import { LocalEmbeddingProvider } from "./embeddings/local-provider"
 import { MemoryLogger } from "./logger"
 import { createMemoryDatabase } from "./storage/db"
 import { MemoryStore } from "./storage/store"
@@ -35,7 +36,7 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
       projectRoot: input.worktree,
       directory: input.directory,
     }
-    const database = await createMemoryDatabase(pluginConfig.dbPath)
+    const database = await createMemoryDatabase(pluginConfig)
     const store = new MemoryStore(database, scope, now)
     const logger = new MemoryLogger(input.client, input.directory, pluginConfig.logLevel)
     const state: RuntimeState = {
@@ -53,12 +54,20 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
         ? new LanguageModelObservationCompressor(options.languageModel)
         : new SessionPromptObservationCompressor(input, state))
 
+    const embeddingProvider = options.embeddingProvider ?? (pluginConfig.enableSemanticSearch
+      ? new LocalEmbeddingProvider(
+        pluginConfig.embeddingModel,
+        pluginConfig.embeddingDimensions,
+      )
+      : null)
+
     const pipeline = new CompressionPipeline(
       store,
       compressor,
       input.client,
       input.directory,
       pluginConfig,
+      embeddingProvider,
       logger,
       now,
     )
@@ -79,11 +88,11 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
 
     return {
       tool: {
-        memory_search: createMemorySearchTool(store, now),
+        memory_search: createMemorySearchTool(store, pluginConfig, embeddingProvider, now),
         memory_timeline: createMemoryTimelineTool(store),
         memory_get: createMemoryGetTool(store),
         memory_forget: createMemoryForgetTool(store, now),
-        memory_stats: createMemoryStatsTool(store, now),
+        memory_stats: createMemoryStatsTool(store, pluginConfig, now),
       },
       event: createEventHook(pipeline, pluginConfig, state, logger),
       "chat.message": createChatMessageHook(store, scope, state, now),
@@ -96,7 +105,7 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
         logger,
         now,
       ),
-      "experimental.chat.system.transform": createSystemTransformHook(store, pluginConfig, state, now),
+      "experimental.chat.system.transform": createSystemTransformHook(store, pluginConfig, embeddingProvider, state, now),
       "experimental.session.compacting": createCompactionHook(store, state, now),
     }
   }

@@ -31,6 +31,12 @@ export interface PluginConfig {
   compressionModel: string | null
   maxRawContentSize: number
   enableSemanticSearch: boolean
+  embeddingModel: string
+  embeddingDimensions: number
+  semanticSearchMaxResults: number
+  semanticContextMaxResults: number
+  semanticMinScore: number
+  hybridSearchAlpha: number
   privacyStrip: boolean
   minContentLength: number
   compressionBatchSize: number
@@ -145,6 +151,33 @@ export interface MemorySearchResult {
   createdAt: number
   toolName: string | null
   quality: ObservationQuality
+  source: "lexical" | "semantic" | "hybrid"
+  score: number | null
+}
+
+export interface ObservationEmbedding {
+  observationId: string
+  projectId: string
+  embeddingModel: string
+  embeddingDimensions: number
+  embeddingInput: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface VectorBackendState {
+  enabled: boolean
+  available: boolean
+  dimensions: number
+  error: string | null
+}
+
+export interface EmbeddingSearchOptions {
+  limit: number
+  semanticLimit?: number
+  typeFilter?: ObservationType
+  semanticMinScore: number
+  hybridSearchAlpha: number
 }
 
 export interface TimelineQuery {
@@ -182,7 +215,14 @@ export interface ObservationCompressor {
 export interface MemoryPluginOptions {
   compressor?: ObservationCompressor
   languageModel?: LanguageModel
+  embeddingProvider?: EmbeddingProvider
   now?: () => number
+}
+
+export interface EmbeddingProvider {
+  embed(value: string): Promise<number[]>
+  getModel(): string
+  getDimensions(): number
 }
 
 export interface RuntimeState {

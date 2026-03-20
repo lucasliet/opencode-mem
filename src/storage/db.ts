@@ -1,32 +1,36 @@
 import { Database } from "bun:sqlite"
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite"
 import type { schema } from "./schema"
+import { load as loadSqliteVec } from "sqlite-vec"
+import type { PluginConfig, VectorBackendState } from "../types"
 import { ensureParentDirectory } from "../utils"
 
 export interface MemoryDatabase {
   sqlite: Database
   db: BunSQLiteDatabase<typeof schema>
+  vector: VectorBackendState
 }
 
 /**
  * Creates the SQLite database and ensures the schema exists.
  *
- * @param dbPath - SQLite file path.
+ * @param config - Plugin configuration.
  * @returns The initialized SQLite client and Drizzle database.
  */
-export async function createMemoryDatabase(dbPath: string): Promise<MemoryDatabase> {
-  await ensureParentDirectory(dbPath)
+export async function createMemoryDatabase(config: PluginConfig): Promise<MemoryDatabase> {
+  await ensureParentDirectory(config.dbPath)
 
-  const sqlite = new Database(dbPath, { create: true })
+  const sqlite = new Database(config.dbPath, { create: true })
   sqlite.exec("PRAGMA journal_mode = WAL;")
   sqlite.exec("PRAGMA busy_timeout = 5000;")
   sqlite.exec("PRAGMA foreign_keys = ON;")
 
-  ensureSchema(sqlite)
+  const vector = ensureSchema(sqlite, config)
 
   return {
     sqlite,
     db: drizzle({ client: sqlite }),
+    vector,
   }
 }
 
@@ -34,9 +38,10 @@ export async function createMemoryDatabase(dbPath: string): Promise<MemoryDataba
  * Ensures that all regular tables, indexes, and FTS objects exist.
  *
  * @param sqlite - Raw SQLite client.
- * @returns Nothing.
+ * @param config - Plugin configuration.
+ * @returns Vector backend state.
  */
-export function ensureSchema(sqlite: Database): void {
+export function ensureSchema(sqlite: Database, config: PluginConfig): VectorBackendState {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS observations (
       id TEXT PRIMARY KEY,
@@ -70,6 +75,23 @@ export function ensureSchema(sqlite: Database): void {
 
     CREATE INDEX IF NOT EXISTS observations_quality_idx
       ON observations(quality);
+
+    CREATE TABLE IF NOT EXISTS observation_embeddings (
+      observation_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      embedding_model TEXT NOT NULL,
+      embedding_dimensions INTEGER NOT NULL,
+      embedding_input TEXT NOT NULL,
+      embedding_vector TEXT NOT NULL DEFAULT '[]',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS observation_embeddings_project_created_idx
+      ON observation_embeddings(project_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS observation_embeddings_model_idx
+      ON observation_embeddings(embedding_model);
 
     CREATE TABLE IF NOT EXISTS session_summaries (
       id TEXT PRIMARY KEY,
@@ -169,6 +191,12 @@ export function ensureSchema(sqlite: Database): void {
     void 0
   }
 
+  try {
+    sqlite.exec("ALTER TABLE observation_embeddings ADD COLUMN embedding_vector TEXT NOT NULL DEFAULT '[]';")
+  } catch {
+    void 0
+  }
+
   sqlite.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts USING fts5(
       title,
@@ -206,5 +234,75 @@ export function ensureSchema(sqlite: Database): void {
     END;
   `)
 
-  sqlite.exec(`INSERT INTO observations_fts(observations_fts) VALUES('rebuild');`)
+  return ensureVectorSchema(sqlite, config)
+}
+
+/**
+ * Loads sqlite-vec and creates vector structures when possible.
+ *
+ * @param sqlite - Raw SQLite client.
+ * @param config - Plugin configuration.
+ * @returns Vector backend state.
+ */
+export function ensureVectorSchema(sqlite: Database, config: PluginConfig): VectorBackendState {
+  if (!config.enableSemanticSearch) {
+    return {
+      enabled: false,
+      available: false,
+      dimensions: config.embeddingDimensions,
+      error: null,
+    }
+  }
+
+  const disabledState: VectorBackendState = {
+    enabled: true,
+    available: false,
+    dimensions: config.embeddingDimensions,
+    error: null,
+  }
+
+  try {
+    loadSqliteVec(sqlite)
+  } catch (error) {
+    return {
+      ...disabledState,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+
+  const existingDefinition = sqlite
+    .query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'observation_embeddings_vec'")
+    .get() as { sql: string | null } | null
+
+  if (existingDefinition?.sql && !existingDefinition.sql.includes(`float[${config.embeddingDimensions}]`)) {
+    return {
+      ...disabledState,
+      error: `Existing vector table dimension mismatch for ${config.embeddingDimensions}`,
+    }
+  }
+
+  try {
+    sqlite.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS observation_embeddings_vec USING vec0(
+        observation_id TEXT,
+        project_id TEXT,
+        type TEXT,
+        quality TEXT,
+        created_at INTEGER,
+        embedding float[${config.embeddingDimensions}] distance_metric=cosine
+      );
+    `)
+  } catch (error) {
+    return {
+      ...disabledState,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+
+  return {
+    enabled: config.enableSemanticSearch,
+    available: true,
+    dimensions: config.embeddingDimensions,
+    error: null,
+  }
 }

@@ -1,6 +1,6 @@
 {
   "name": "opencode-memory-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Persistent cross-session memory plugin for OpenCode",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,11 +22,12 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "@opencode-ai/plugin": "^1.2.27",
-    "opencode-memory-plugin": ".",
     "@opencode-ai/sdk": "^1.2.27",
     "ai": "^5.0.0",
     "drizzle-orm": "^0.44.6",
+    "sqlite-vec": "^0.1.7",
     "zod": "^4.1.8"
   },
   "devDependencies": {

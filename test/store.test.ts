@@ -1,7 +1,46 @@
 import { describe, expect, test } from "bun:test"
 import { createMemoryDatabase } from "../src/storage/db"
 import { MemoryStore } from "../src/storage/store"
-import type { Observation, PendingMessage, ProjectScope, SessionSummary, UserPromptRecord } from "../src/types"
+import type { EmbeddingSearchOptions, Observation, PendingMessage, PluginConfig, ProjectScope, SessionSummary, UserPromptRecord } from "../src/types"
+
+function createPluginConfig(): PluginConfig {
+  return {
+    dbPath: ":memory:",
+    indexSize: 50,
+    sampleSize: 5,
+    maxPendingRetries: 3,
+    compressionModel: null,
+    maxRawContentSize: 50_000,
+    enableSemanticSearch: true,
+    embeddingModel: "Xenova/all-MiniLM-L6-v2",
+    embeddingDimensions: 4,
+    semanticSearchMaxResults: 8,
+    semanticContextMaxResults: 3,
+    semanticMinScore: 0.55,
+    hybridSearchAlpha: 0.65,
+    privacyStrip: true,
+    minContentLength: 100,
+    compressionBatchSize: 10,
+    retentionDays: 90,
+    contextMaxTokens: 2_000,
+    summaryLookback: 3,
+    orphanThresholdMs: 5 * 60_000,
+    queuePollIntervalMs: 250,
+    sessionSummaryDebounceMs: 1_500,
+    logLevel: "error",
+    configPaths: [],
+  }
+}
+
+function createSearchOptions(overrides: Partial<EmbeddingSearchOptions> = {}): EmbeddingSearchOptions {
+  return {
+    limit: 10,
+    semanticLimit: 10,
+    semanticMinScore: 0.4,
+    hybridSearchAlpha: 0.65,
+    ...overrides,
+  }
+}
 
 function createStore(now = () => Date.now()): Promise<MemoryStore> {
   const scope: ProjectScope = {
@@ -10,7 +49,7 @@ function createStore(now = () => Date.now()): Promise<MemoryStore> {
     directory: "/tmp/project",
   }
 
-  return createMemoryDatabase(":memory:").then((database) => new MemoryStore(database, scope, now))
+  return createMemoryDatabase(createPluginConfig()).then((database) => new MemoryStore(database, scope, now))
 }
 
 function createObservation(overrides: Partial<Observation> = {}): Observation {
@@ -116,6 +155,51 @@ describe("memory store", () => {
     const results = await store.searchFTS("jwt auth", 10)
     expect(results.length).toBe(1)
     expect(results[0]?.quality).toBe("medium")
+    expect(results[0]?.source).toBe("lexical")
+  })
+
+  test("shouldSaveEmbeddingsAndSearchSemantically", async () => {
+    const store = await createStore()
+    const observation = createObservation({ id: "obs_semantic", title: "JWT auth fix" })
+    await store.saveObservation(observation)
+    await store.saveObservationEmbedding({
+      observationId: observation.id,
+      projectId: observation.projectId,
+      embeddingModel: "test-model",
+      embeddingDimensions: 4,
+      embeddingInput: "jwt auth fix",
+      createdAt: observation.createdAt,
+      updatedAt: observation.createdAt,
+    }, observation, [0.1, 0.2, 0.3, 0.4])
+
+    const results = await store.searchSemantic([0.1, 0.2, 0.3, 0.4], createSearchOptions())
+
+    expect(results.length).toBe(1)
+    expect(results[0]?.id).toBe("obs_semantic")
+    expect(results[0]?.source).toBe("semantic")
+  })
+
+  test("shouldCombineLexicalAndSemanticMatchesInHybridSearch", async () => {
+    const store = await createStore()
+    const lexical = createObservation({ id: "obs_lexical", title: "JWT auth fix", narrative: "Updated JWT authentication middleware" })
+    const semantic = createObservation({ id: "obs_semantic", title: "Session token refresh", narrative: "Refresh token handling in authentication flow" })
+
+    await store.saveObservation(lexical)
+    await store.saveObservation(semantic)
+    await store.saveObservationEmbedding({
+      observationId: semantic.id,
+      projectId: semantic.projectId,
+      embeddingModel: "test-model",
+      embeddingDimensions: 4,
+      embeddingInput: "session token auth",
+      createdAt: semantic.createdAt,
+      updatedAt: semantic.createdAt,
+    }, semantic, [0.9, 0.1, 0.1, 0.1])
+
+    const results = await store.searchHybrid("jwt auth", [0.9, 0.1, 0.1, 0.1], createSearchOptions({ semanticMinScore: 0.1 }))
+
+    expect(results.length).toBeGreaterThan(0)
+    expect(results.some((result) => result.source === "lexical" || result.source === "hybrid")).toBe(true)
   })
 
   test("shouldDeleteObservationsByIds", async () => {

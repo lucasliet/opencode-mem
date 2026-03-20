@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { ObservationCompressor, PendingMessage, PluginConfig, RuntimeState } from "../src/types"
+import type { EmbeddingProvider, ObservationCompressor, PendingMessage, PluginConfig, RuntimeState } from "../src/types"
 import { CompressionPipeline } from "../src/compression/pipeline"
 import { createMemoryDatabase } from "../src/storage/db"
 import { MemoryStore } from "../src/storage/store"
@@ -35,6 +35,12 @@ function createPluginConfig(): PluginConfig {
     compressionModel: null,
     maxRawContentSize: 50_000,
     enableSemanticSearch: false,
+    embeddingModel: "Xenova/all-MiniLM-L6-v2",
+    embeddingDimensions: 4,
+    semanticSearchMaxResults: 8,
+    semanticContextMaxResults: 3,
+    semanticMinScore: 0.55,
+    hybridSearchAlpha: 0.65,
     privacyStrip: true,
     minContentLength: 100,
     compressionBatchSize: 10,
@@ -74,24 +80,26 @@ function createNoopState(): RuntimeState {
 function createPipeline(
   store: MemoryStore,
   compressor: ObservationCompressor,
+  embeddingProvider: EmbeddingProvider | null,
   now: () => number,
 ): CompressionPipeline {
   const logger = new MemoryLogger(createMockClient(), "/tmp/project", "error")
   return new CompressionPipeline(
     store,
     compressor,
-    createMockClient(),
-    "/tmp/project",
-    createPluginConfig(),
-    logger,
-    now,
-  )
+      createMockClient(),
+      "/tmp/project",
+      createPluginConfig(),
+      embeddingProvider,
+      logger,
+      now,
+    )
 }
 
 describe("compression pipeline", () => {
   test("shouldProcessQueueAndPersistObservation", async () => {
     const now = () => BASE_NOW
-    const database = await createMemoryDatabase(":memory:")
+    const database = await createMemoryDatabase(createPluginConfig())
     const store = new MemoryStore(database, {
       projectId: "project_1",
       projectRoot: "/tmp/project",
@@ -123,7 +131,7 @@ describe("compression pipeline", () => {
       }),
     }
 
-    const pipeline = createPipeline(store, compressor, now)
+    const pipeline = createPipeline(store, compressor, null, now)
     await store.enqueuePending(createPending({ id: "pending_1" }))
 
     await pipeline.processQueue()
@@ -140,7 +148,7 @@ describe("compression pipeline", () => {
   test("shouldRetryAndEventuallyFailWhenCompressorThrows", async () => {
     let nowValue = BASE_NOW
     const now = () => nowValue
-    const database = await createMemoryDatabase(":memory:")
+    const database = await createMemoryDatabase(createPluginConfig())
     const store = new MemoryStore(database, {
       projectId: "project_1",
       projectRoot: "/tmp/project",
@@ -154,7 +162,7 @@ describe("compression pipeline", () => {
       summarizeSession: async () => ({ text: "{}", modelUsed: null }),
     }
 
-    const pipeline = createPipeline(store, compressor, now)
+    const pipeline = createPipeline(store, compressor, null, now)
     await store.enqueuePending(createPending({ id: "pending_fail", retryCount: 2 }))
 
     await pipeline.processSingle(createPending({ id: "pending_fail", retryCount: 2 }))
@@ -167,7 +175,7 @@ describe("compression pipeline", () => {
 
   test("shouldRecoverOrphanedMessages", async () => {
     const now = () => BASE_NOW
-    const database = await createMemoryDatabase(":memory:")
+    const database = await createMemoryDatabase(createPluginConfig())
     const store = new MemoryStore(database, {
       projectId: "project_1",
       projectRoot: "/tmp/project",
@@ -185,7 +193,7 @@ describe("compression pipeline", () => {
       summarizeSession: async () => ({ text: "{}", modelUsed: null }),
     }
 
-    const pipeline = createPipeline(store, compressor, now)
+    const pipeline = createPipeline(store, compressor, null, now)
     await pipeline.recoverOrphans()
 
     const pending = await store.getPendingMessages(["pending"], 10)
@@ -194,7 +202,7 @@ describe("compression pipeline", () => {
 
   test("shouldStoreRawFallbackForLowQualityObservations", async () => {
     const now = () => BASE_NOW
-    const database = await createMemoryDatabase(":memory:")
+    const database = await createMemoryDatabase(createPluginConfig())
     const store = new MemoryStore(database, {
       projectId: "project_1",
       projectRoot: "/tmp/project",
@@ -217,7 +225,7 @@ describe("compression pipeline", () => {
       summarizeSession: async () => ({ text: "{}", modelUsed: null }),
     }
 
-    const pipeline = createPipeline(store, compressor, now)
+    const pipeline = createPipeline(store, compressor, null, now)
     const pending = createPending({
       id: "pending_low",
       rawContent: "Updated src/index.ts and fixed authentication token validation.",
@@ -228,6 +236,61 @@ describe("compression pipeline", () => {
     const observation = await store.getObservation("pending_low")
     expect(observation?.quality).toBe("low")
     expect(observation?.rawFallback).not.toBeNull()
+  })
+
+  test("shouldPersistEmbeddingsWithoutBlockingObservationPersistence", async () => {
+    const now = () => BASE_NOW
+    const config = {
+      ...createPluginConfig(),
+      enableSemanticSearch: true,
+    }
+    const database = await createMemoryDatabase(config)
+    const store = new MemoryStore(database, {
+      projectId: "project_1",
+      projectRoot: "/tmp/project",
+      directory: "/tmp/project",
+    }, now)
+
+    const compressor: ObservationCompressor = {
+      compressObservation: async () => ({
+        text: JSON.stringify({
+          title: "JWT auth fix",
+          subtitle: "Updated middleware",
+          narrative: "Updated src/index.ts for authentication.",
+          facts: ["Updated authentication middleware"],
+          concepts: ["authentication", "jwt"],
+          filesInvolved: ["src/index.ts"],
+          type: "tool_output",
+        }),
+        modelUsed: "anthropic/claude-haiku-4-5",
+      }),
+      summarizeSession: async () => ({ text: "{}", modelUsed: null }),
+    }
+    const embeddingProvider: EmbeddingProvider = {
+      getModel: () => "test-embedding-model",
+      getDimensions: () => 4,
+      embed: async () => [0.1, 0.2, 0.3, 0.4],
+    }
+    const logger = new MemoryLogger(createMockClient(), "/tmp/project", "error")
+    const pipeline = new CompressionPipeline(
+      store,
+      compressor,
+      createMockClient(),
+      "/tmp/project",
+      config,
+      embeddingProvider,
+      logger,
+      now,
+    )
+
+    await store.enqueuePending(createPending({ id: "pending_embed" }))
+    await pipeline.processQueue()
+
+    const observation = await store.getObservation("pending_embed")
+    const embeddingStats = await store.getEmbeddingStats()
+
+    expect(observation).not.toBeNull()
+    expect(embeddingStats.totalEmbeddings).toBe(1)
   })
 
   void createNoopState()

@@ -9,6 +9,11 @@ describe("config normalization", () => {
         indexSize: 999,
         sampleSize: -4,
         maxPendingRetries: 0,
+        embeddingDimensions: 99999,
+        semanticSearchMaxResults: 999,
+        semanticContextMaxResults: 999,
+        semanticMinScore: 2,
+        hybridSearchAlpha: -1,
         compressionBatchSize: 999,
         logLevel: "debug",
       },
@@ -19,6 +24,11 @@ describe("config normalization", () => {
     expect(config.indexSize).toBe(200)
     expect(config.sampleSize).toBe(0)
     expect(config.maxPendingRetries).toBe(1)
+    expect(config.embeddingDimensions).toBe(4096)
+    expect(config.semanticSearchMaxResults).toBe(50)
+    expect(config.semanticContextMaxResults).toBe(10)
+    expect(config.semanticMinScore).toBe(1)
+    expect(config.hybridSearchAlpha).toBe(0)
     expect(config.compressionBatchSize).toBe(50)
     expect(config.logLevel).toBe("debug")
   })

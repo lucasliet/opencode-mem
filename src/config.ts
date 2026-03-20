@@ -14,7 +14,13 @@ const DEFAULT_CONFIG: Omit<PluginConfig, "configPaths"> = {
   maxPendingRetries: 3,
   compressionModel: null,
   maxRawContentSize: 50_000,
-  enableSemanticSearch: false,
+  enableSemanticSearch: true,
+  embeddingModel: "Xenova/all-MiniLM-L6-v2",
+  embeddingDimensions: 384,
+  semanticSearchMaxResults: 8,
+  semanticContextMaxResults: 3,
+  semanticMinScore: 0.55,
+  hybridSearchAlpha: 0.65,
   privacyStrip: true,
   minContentLength: 100,
   compressionBatchSize: 10,
@@ -161,6 +167,12 @@ export function loadEnvironmentConfig(): PartialPluginConfig {
     maxPendingRetries: parseInteger(process.env.OPENCODE_MEMORY_MAX_PENDING_RETRIES),
     maxRawContentSize: parseInteger(process.env.OPENCODE_MEMORY_MAX_RAW_CONTENT_SIZE),
     enableSemanticSearch: parseBoolean(process.env.OPENCODE_MEMORY_ENABLE_SEMANTIC_SEARCH),
+    embeddingModel: process.env.OPENCODE_MEMORY_EMBEDDING_MODEL,
+    embeddingDimensions: parseInteger(process.env.OPENCODE_MEMORY_EMBEDDING_DIMENSIONS),
+    semanticSearchMaxResults: parseInteger(process.env.OPENCODE_MEMORY_SEMANTIC_SEARCH_MAX_RESULTS),
+    semanticContextMaxResults: parseInteger(process.env.OPENCODE_MEMORY_SEMANTIC_CONTEXT_MAX_RESULTS),
+    semanticMinScore: parseNumber(process.env.OPENCODE_MEMORY_SEMANTIC_MIN_SCORE),
+    hybridSearchAlpha: parseNumber(process.env.OPENCODE_MEMORY_HYBRID_SEARCH_ALPHA),
     privacyStrip: parseBoolean(process.env.OPENCODE_MEMORY_PRIVACY_STRIP),
     minContentLength: parseInteger(process.env.OPENCODE_MEMORY_MIN_CONTENT_LENGTH),
     compressionBatchSize: parseInteger(process.env.OPENCODE_MEMORY_BATCH_SIZE),
@@ -218,6 +230,27 @@ export function normalizeConfig(
       DEFAULT_CONFIG.maxRawContentSize,
     ),
     enableSemanticSearch: value.enableSemanticSearch ?? DEFAULT_CONFIG.enableSemanticSearch,
+    embeddingModel: value.embeddingModel?.trim() || DEFAULT_CONFIG.embeddingModel,
+    embeddingDimensions: clampNumber(
+      value.embeddingDimensions,
+      8,
+      4_096,
+      DEFAULT_CONFIG.embeddingDimensions,
+    ),
+    semanticSearchMaxResults: clampNumber(
+      value.semanticSearchMaxResults,
+      1,
+      50,
+      DEFAULT_CONFIG.semanticSearchMaxResults,
+    ),
+    semanticContextMaxResults: clampNumber(
+      value.semanticContextMaxResults,
+      0,
+      10,
+      DEFAULT_CONFIG.semanticContextMaxResults,
+    ),
+    semanticMinScore: clampFloat(value.semanticMinScore, 0, 1, DEFAULT_CONFIG.semanticMinScore),
+    hybridSearchAlpha: clampFloat(value.hybridSearchAlpha, 0, 1, DEFAULT_CONFIG.hybridSearchAlpha),
     privacyStrip: value.privacyStrip ?? DEFAULT_CONFIG.privacyStrip,
     minContentLength: clampNumber(
       value.minContentLength,
@@ -282,6 +315,21 @@ export function parseInteger(value: string | undefined): number | undefined {
 }
 
 /**
+ * Parses a floating-point environment variable.
+ *
+ * @param value - Raw environment value.
+ * @returns The parsed float or undefined.
+ */
+export function parseNumber(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined
+  }
+
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+/**
  * Parses a boolean environment variable.
  *
  * @param value - Raw environment value.
@@ -332,6 +380,28 @@ export function parseLogLevel(value: string | undefined): LogLevel | undefined {
  * @returns A safe numeric value.
  */
 export function clampNumber(
+  value: number | undefined,
+  minimum: number,
+  maximum: number,
+  fallback: number,
+): number {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return fallback
+  }
+
+  return Math.max(minimum, Math.min(maximum, value))
+}
+
+/**
+ * Clamps an optional float into a safe range with a fallback value.
+ *
+ * @param value - Candidate value.
+ * @param minimum - Minimum supported value.
+ * @param maximum - Maximum supported value.
+ * @param fallback - Fallback when the candidate is invalid.
+ * @returns A safe numeric value.
+ */
+export function clampFloat(
   value: number | undefined,
   minimum: number,
   maximum: number,

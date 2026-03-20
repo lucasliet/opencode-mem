@@ -52,6 +52,24 @@ export const sessionSummaries = sqliteTable(
   ],
 )
 
+export const observationEmbeddings = sqliteTable(
+  "observation_embeddings",
+  {
+    observationId: text("observation_id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    embeddingModel: text("embedding_model").notNull(),
+    embeddingDimensions: integer("embedding_dimensions").notNull(),
+    embeddingInput: text("embedding_input").notNull(),
+    embeddingVector: text("embedding_vector").notNull().default("[]"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("observation_embeddings_project_created_idx").on(table.projectId, table.createdAt),
+    index("observation_embeddings_model_idx").on(table.embeddingModel),
+  ],
+)
+
 export const pendingMessages = sqliteTable(
   "pending_messages",
   {
@@ -122,6 +140,7 @@ export const toolUsageStats = sqliteTable(
 
 export const schema = {
   deletionLog,
+  observationEmbeddings,
   observations,
   pendingMessages,
   sessionSummaries,
@@ -132,6 +151,8 @@ export const schema = {
 export type ObservationRow = typeof observations.$inferSelect
 
 export type PendingMessageRow = typeof pendingMessages.$inferSelect
+
+export type ObservationEmbeddingRow = typeof observationEmbeddings.$inferSelect
 
 export type SessionSummaryRow = typeof sessionSummaries.$inferSelect
 

@@ -2,12 +2,14 @@ import { and, desc, eq, inArray, lte, gte, sql } from "drizzle-orm"
 import type { Database } from "bun:sqlite"
 import {
   deletionLog,
+  observationEmbeddings,
   observations,
   pendingMessages,
   sessionSummaries,
   toolUsageStats,
   userPrompts,
   type DeletionLogRow,
+  type ObservationEmbeddingRow,
   type ObservationRow,
   type PendingMessageRow,
   type SessionSummaryRow,
@@ -16,10 +18,12 @@ import {
 } from "./schema"
 import type { MemoryDatabase } from "./db"
 import type {
+  EmbeddingSearchOptions,
   DeletionInitiator,
   DeletionLogEntry,
   MemorySearchResult,
   Observation,
+  ObservationEmbedding,
   ObservationType,
   PendingMessage,
   PendingStatus,
@@ -33,6 +37,18 @@ import type {
 import { createSortableId, parseJsonValue, sanitizeFtsQuery, serializeJson } from "../utils"
 
 type MaxRow = { value: number | null }
+
+type SearchCandidate = {
+  id: string
+  title: string
+  subtitle: string | null
+  type: ObservationType
+  createdAt: number
+  toolName: string | null
+  quality: Observation["quality"]
+  lexicalScore?: number
+  semanticScore?: number
+}
 
 /**
  * Provides project-scoped persistence and retrieval operations for the memory plugin.
@@ -415,6 +431,321 @@ export class MemoryStore {
     limit: number,
     typeFilter?: ObservationType,
   ): Promise<MemorySearchResult[]> {
+    const rows = this.searchFTSRows(query, limit, typeFilter)
+
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      subtitle: row.subtitle,
+      type: row.type,
+      createdAt: row.createdAt,
+      toolName: row.toolName,
+      quality: row.quality,
+      source: "lexical",
+      score: row.lexicalScore ?? null,
+    }))
+  }
+
+  /**
+   * Searches observations through the vector index.
+   *
+   * @param embedding - Query embedding.
+   * @param options - Ranking and filtering options.
+   * @returns Compact semantic search results.
+   */
+  async searchSemantic(embedding: number[], options: EmbeddingSearchOptions): Promise<MemorySearchResult[]> {
+    if (!embedding.length) {
+      return []
+    }
+
+    const semanticRows = this.searchSemanticRows(embedding, options.semanticLimit ?? options.limit, options.typeFilter)
+      .filter((row) => (row.semanticScore ?? 0) >= options.semanticMinScore)
+      .sort((left, right) => {
+        const leftScore = left.semanticScore ?? 0
+        const rightScore = right.semanticScore ?? 0
+        if (rightScore !== leftScore) {
+          return rightScore - leftScore
+        }
+
+        return right.createdAt - left.createdAt
+      })
+      .slice(0, options.limit)
+
+    return semanticRows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      subtitle: row.subtitle,
+      type: row.type,
+      createdAt: row.createdAt,
+      toolName: row.toolName,
+      quality: row.quality,
+      source: "semantic",
+      score: row.semanticScore ?? null,
+    }))
+  }
+
+  /**
+   * Combines lexical and semantic retrieval into a single ranked result list.
+   *
+   * @param query - Raw search query.
+   * @param embedding - Optional semantic query embedding.
+   * @param options - Ranking and filtering options.
+   * @returns Compact hybrid search results.
+   */
+  async searchHybrid(
+    query: string,
+    embedding: number[] | null,
+    options: EmbeddingSearchOptions,
+  ): Promise<MemorySearchResult[]> {
+    const lexicalRows = this.searchFTSRows(query, options.limit, options.typeFilter)
+    if (!embedding?.length) {
+      return lexicalRows.map((row) => ({
+        id: row.id,
+        title: row.title,
+        subtitle: row.subtitle,
+        type: row.type,
+        createdAt: row.createdAt,
+        toolName: row.toolName,
+        quality: row.quality,
+        source: "lexical",
+        score: row.lexicalScore ?? null,
+      }))
+    }
+
+    const semanticRows = this.searchSemanticRows(embedding, options.semanticLimit ?? options.limit, options.typeFilter)
+    const entries = new Map<string, SearchCandidate>()
+
+    for (const row of lexicalRows) {
+      entries.set(row.id, row)
+    }
+
+    for (const row of semanticRows) {
+      const existing = entries.get(row.id)
+      if (existing) {
+        existing.semanticScore = row.semanticScore
+        continue
+      }
+
+      entries.set(row.id, row)
+    }
+
+    const ranked = Array.from(entries.values())
+      .map((row) => {
+        const lexicalScore = row.lexicalScore ?? 0
+        const semanticScore = row.semanticScore ?? 0
+        const score = lexicalScore > 0 && semanticScore > 0
+          ? lexicalScore * options.hybridSearchAlpha + semanticScore * (1 - options.hybridSearchAlpha)
+          : lexicalScore || semanticScore
+        const qualityPenalty = row.quality === "low" ? 0.15 : row.quality === "medium" ? 0.05 : 0
+
+        return {
+          ...row,
+          combinedScore: Math.max(0, score - qualityPenalty),
+        }
+      })
+      .filter((row) => row.lexicalScore || row.semanticScore)
+      .filter((row) => row.semanticScore === undefined || row.semanticScore >= options.semanticMinScore || row.lexicalScore)
+      .sort((left, right) => {
+        if (right.combinedScore !== left.combinedScore) {
+          return right.combinedScore - left.combinedScore
+        }
+
+        return right.createdAt - left.createdAt
+      })
+      .slice(0, options.limit)
+
+    return ranked.map((row) => ({
+      id: row.id,
+      title: row.title,
+      subtitle: row.subtitle,
+      type: row.type,
+      createdAt: row.createdAt,
+      toolName: row.toolName,
+      quality: row.quality,
+      source: row.lexicalScore && row.semanticScore ? "hybrid" : row.semanticScore ? "semantic" : "lexical",
+      score: row.combinedScore,
+    }))
+  }
+
+  /**
+   * Stores or replaces an observation embedding.
+   *
+   * @param embedding - Embedding metadata to persist.
+   * @param observation - Observation linked to the embedding.
+   * @param vector - Numeric embedding vector.
+   * @returns A promise that resolves after persistence.
+   */
+  async saveObservationEmbedding(
+    embedding: ObservationEmbedding,
+    observation: Observation,
+    vector: number[],
+  ): Promise<void> {
+    if (!vector.length) {
+      return
+    }
+
+    this.database.db
+      .insert(observationEmbeddings)
+      .values({
+        observationId: embedding.observationId,
+        projectId: embedding.projectId,
+        embeddingModel: embedding.embeddingModel,
+        embeddingDimensions: embedding.embeddingDimensions,
+        embeddingInput: embedding.embeddingInput,
+        embeddingVector: serializeJson(vector),
+        createdAt: embedding.createdAt,
+        updatedAt: embedding.updatedAt,
+      })
+      .onConflictDoUpdate({
+        target: observationEmbeddings.observationId,
+        set: {
+          embeddingModel: embedding.embeddingModel,
+          embeddingDimensions: embedding.embeddingDimensions,
+          embeddingInput: embedding.embeddingInput,
+          embeddingVector: serializeJson(vector),
+          updatedAt: embedding.updatedAt,
+        },
+      })
+      .run()
+
+    if (!this.database.vector.available) {
+      return
+    }
+
+    this.database.sqlite
+      .query("DELETE FROM observation_embeddings_vec WHERE observation_id = ?")
+      .run(embedding.observationId)
+
+    this.database.sqlite
+      .query(
+        `
+          INSERT INTO observation_embeddings_vec(
+            observation_id,
+            project_id,
+            type,
+            quality,
+            created_at,
+            embedding
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        embedding.observationId,
+        embedding.projectId,
+        observation.type,
+        observation.quality,
+        observation.createdAt,
+        JSON.stringify(vector),
+      )
+  }
+
+  /**
+   * Deletes stored embeddings for a set of observations.
+   *
+   * @param ids - Observation identifiers.
+   * @returns A promise that resolves after deletion.
+   */
+  async deleteObservationEmbeddings(ids: string[]): Promise<void> {
+    if (!ids.length) {
+      return
+    }
+
+    this.database.db
+      .delete(observationEmbeddings)
+      .where(and(eq(observationEmbeddings.projectId, this.scope.projectId), inArray(observationEmbeddings.observationId, ids)))
+      .run()
+
+    if (!this.database.vector.available) {
+      return
+    }
+
+    const placeholders = ids.map(() => "?").join(", ")
+    this.database.sqlite
+      .query(`DELETE FROM observation_embeddings_vec WHERE project_id = ? AND observation_id IN (${placeholders})`)
+      .run(this.scope.projectId, ...ids)
+  }
+
+  /**
+   * Returns embedding coverage statistics for the current project.
+   *
+   * @returns Vector coverage and metadata summary.
+   */
+  async getEmbeddingStats(): Promise<{
+    totalEmbeddings: number
+    coverage: number
+    model: string | null
+    dimensions: number | null
+    vectorAvailable: boolean
+    backendMode: "sqlite-vec" | "js-fallback"
+    semanticEnabled: boolean
+    vectorError: string | null
+  }> {
+    const countRow = this.database.db
+      .select({ value: sql<number>`count(*)` })
+      .from(observationEmbeddings)
+      .where(eq(observationEmbeddings.projectId, this.scope.projectId))
+      .get()
+
+    const latestRow = this.database.db
+      .select({
+        embeddingModel: observationEmbeddings.embeddingModel,
+        embeddingDimensions: observationEmbeddings.embeddingDimensions,
+      })
+      .from(observationEmbeddings)
+      .where(eq(observationEmbeddings.projectId, this.scope.projectId))
+      .orderBy(desc(observationEmbeddings.updatedAt))
+      .get()
+
+    const totalEmbeddings = countRow?.value ?? 0
+    const totalObservations = await this.countObservations()
+
+    return {
+      totalEmbeddings,
+      coverage: totalObservations > 0 ? totalEmbeddings / totalObservations : 0,
+      model: latestRow?.embeddingModel ?? null,
+      dimensions: latestRow?.embeddingDimensions ?? null,
+      vectorAvailable: this.database.vector.available,
+      backendMode: this.database.vector.available ? "sqlite-vec" : "js-fallback",
+      semanticEnabled: this.database.vector.enabled,
+      vectorError: this.database.vector.error,
+    }
+  }
+
+  /**
+   * Returns the latest user prompt for a session.
+   *
+   * @param sessionId - OpenCode session identifier.
+   * @returns The latest prompt text or null.
+   */
+  async getLatestUserPrompt(sessionId: string): Promise<string | null> {
+    const row = this.database.db
+      .select({ content: userPrompts.content })
+      .from(userPrompts)
+      .where(and(eq(userPrompts.projectId, this.scope.projectId), eq(userPrompts.sessionId, sessionId)))
+      .orderBy(desc(userPrompts.createdAt))
+      .get()
+
+    return row?.content ?? null
+  }
+
+  /**
+   * Returns the current vector backend state.
+   *
+   * @returns Vector backend state.
+   */
+  getVectorBackendState() {
+    return this.database.vector
+  }
+
+  /**
+   * Executes the lexical portion of search and normalizes scores.
+   *
+   * @param query - Raw user query.
+   * @param limit - Maximum number of results.
+   * @param typeFilter - Optional observation type filter.
+   * @returns Lexical candidates with normalized scores.
+   */
+  private searchFTSRows(query: string, limit: number, typeFilter?: ObservationType): SearchCandidate[] {
     const match = sanitizeFtsQuery(query)
     if (!match) {
       return []
@@ -428,13 +759,14 @@ export class MemoryStore {
         o.type,
         o.created_at,
         o.tool_name,
-        o.quality
+        o.quality,
+        bm25(observations_fts) AS lexical_rank
       FROM observations_fts f
       JOIN observations o ON o.rowid = f.rowid
       WHERE observations_fts MATCH ?
         AND o.project_id = ?
         ${typeFilter ? "AND o.type = ?" : ""}
-      ORDER BY bm25(observations_fts), o.created_at DESC
+      ORDER BY lexical_rank, o.created_at DESC
       LIMIT ?
     `
 
@@ -449,7 +781,110 @@ export class MemoryStore {
       type: ObservationType
       created_at: number
       tool_name: string | null
-      quality: "high" | "medium" | "low"
+      quality: Observation["quality"]
+      lexical_rank: number | null
+    }>
+
+    return rows.map((row, index) => ({
+      id: row.id,
+      title: row.title,
+      subtitle: row.subtitle,
+      type: row.type,
+      createdAt: row.created_at,
+      toolName: row.tool_name,
+      quality: row.quality,
+      lexicalScore: normalizeRank(row.lexical_rank, index),
+    }))
+  }
+
+  /**
+   * Executes semantic search against the sqlite-vec table.
+   *
+   * @param embedding - Query embedding.
+   * @param limit - Maximum number of results.
+   * @param typeFilter - Optional observation type filter.
+   * @returns Semantic candidates with normalized cosine scores.
+   */
+  private searchSemanticRows(embedding: number[], limit: number, typeFilter?: ObservationType): SearchCandidate[] {
+    if (!this.database.vector.available) {
+      const conditions = [eq(observationEmbeddings.projectId, this.scope.projectId)]
+      if (typeFilter) {
+        conditions.push(eq(observations.type, typeFilter))
+      }
+
+      const rows = this.database.db
+        .select({
+          observationId: observationEmbeddings.observationId,
+          embeddingVector: observationEmbeddings.embeddingVector,
+          title: observations.title,
+          subtitle: observations.subtitle,
+          type: observations.type,
+          createdAt: observations.createdAt,
+          toolName: observations.toolName,
+          quality: observations.quality,
+        })
+        .from(observationEmbeddings)
+        .innerJoin(observations, eq(observations.id, observationEmbeddings.observationId))
+        .where(and(...conditions))
+        .all()
+
+      return rows
+        .map((row) => ({
+          id: row.observationId,
+          title: row.title,
+          subtitle: row.subtitle,
+          type: row.type as ObservationType,
+          createdAt: row.createdAt,
+          toolName: row.toolName,
+          quality: row.quality as Observation["quality"],
+          semanticScore: cosineSimilarity(embedding, parseJsonValue<number[]>(row.embeddingVector, [])),
+        }))
+        .filter((row) => (row.semanticScore ?? 0) > 0)
+        .sort((left, right) => {
+          const leftScore = left.semanticScore ?? 0
+          const rightScore = right.semanticScore ?? 0
+          if (rightScore !== leftScore) {
+            return rightScore - leftScore
+          }
+
+          return right.createdAt - left.createdAt
+        })
+        .slice(0, limit)
+    }
+
+    const sqlText = `
+      SELECT
+        o.id,
+        o.title,
+        o.subtitle,
+        o.type,
+        o.created_at,
+        o.tool_name,
+        o.quality,
+        v.distance
+      FROM observation_embeddings_vec v
+      JOIN observations o ON o.id = v.observation_id
+      WHERE v.embedding MATCH ?
+        AND k = ?
+        AND v.project_id = ?
+        ${typeFilter ? "AND v.type = ?" : ""}
+      ORDER BY v.distance, o.created_at DESC
+    `
+
+    const serialized = JSON.stringify(embedding)
+    const parameters = typeFilter
+      ? [serialized, limit, this.scope.projectId, typeFilter]
+      : [serialized, limit, this.scope.projectId]
+
+    const rows = this.database.sqlite.query(sqlText).all(...parameters) as Array<{
+      id: string
+      title: string
+      subtitle: string | null
+      type: ObservationType
+      created_at: number
+      tool_name: string | null
+      quality: Observation["quality"]
+      distance: number
     }>
 
     return rows.map((row) => ({
@@ -460,6 +895,7 @@ export class MemoryStore {
       createdAt: row.created_at,
       toolName: row.tool_name,
       quality: row.quality,
+      semanticScore: normalizeDistance(row.distance),
     }))
   }
 
@@ -587,6 +1023,8 @@ export class MemoryStore {
       return 0
     }
 
+    await this.deleteObservationEmbeddings(ids)
+
     this.database.db
       .delete(observations)
       .where(and(eq(observations.projectId, this.scope.projectId), inArray(observations.id, ids)))
@@ -629,18 +1067,13 @@ export class MemoryStore {
    * @returns Number of deleted observations.
    */
   async deleteBySession(sessionId: string): Promise<number> {
-    const row = this.database.db
-      .select({ value: sql<number>`count(*)` })
+    const rows = this.database.db
+      .select({ id: observations.id })
       .from(observations)
       .where(and(eq(observations.projectId, this.scope.projectId), eq(observations.sessionId, sessionId)))
-      .get()
+      .all()
 
-    const count = row?.value ?? 0
-
-    this.database.db
-      .delete(observations)
-      .where(and(eq(observations.projectId, this.scope.projectId), eq(observations.sessionId, sessionId)))
-      .run()
+    const count = await this.deleteObservations(rows.map((row) => row.id))
 
     this.database.db
       .delete(sessionSummaries)
@@ -662,21 +1095,18 @@ export class MemoryStore {
       return 0
     }
 
-    const row = this.database.db
-      .select({ value: sql<number>`count(*)` })
+    const rows = this.database.db
+      .select({ id: observations.id })
       .from(observations)
       .where(and(eq(observations.projectId, this.scope.projectId), lte(observations.createdAt, cutoff)))
-      .get()
+      .all()
 
-    const count = row?.value ?? 0
+    const count = rows.length
     if (!count) {
       return 0
     }
 
-    this.database.db
-      .delete(observations)
-      .where(and(eq(observations.projectId, this.scope.projectId), lte(observations.createdAt, cutoff)))
-      .run()
+    await this.deleteObservations(rows.map((row) => row.id))
 
     return count
   }
@@ -1063,17 +1493,14 @@ export class MemoryStore {
     const pendingCutoff = now - 7 * 86_400_000
     const summaryCutoff = now - retentionDays * 2 * 86_400_000
 
-    const observationDeleteRow = this.database.db
-      .select({ value: sql<number>`count(*)` })
+    const observationRows = this.database.db
+      .select({ id: observations.id })
       .from(observations)
       .where(and(eq(observations.projectId, this.scope.projectId), lte(observations.createdAt, retentionCutoff)))
-      .get()
-    const observationDeleteCount = observationDeleteRow?.value ?? 0
+      .all()
+    const observationDeleteCount = observationRows.length
 
-    this.database.db
-      .delete(observations)
-      .where(and(eq(observations.projectId, this.scope.projectId), lte(observations.createdAt, retentionCutoff)))
-      .run()
+    await this.deleteObservations(observationRows.map((row) => row.id))
 
     if (observationDeleteCount > 0) {
       await this.logDeletion(
@@ -1272,4 +1699,80 @@ export function mapToolUsageStat(row: ToolUsageStatRow): ToolUsageStat {
     callCount: row.callCount,
     createdAt: row.createdAt,
   }
+}
+
+/**
+ * Maps an embedding row into the runtime shape.
+ *
+ * @param row - Database row.
+ * @returns Normalized observation embedding.
+ */
+export function mapObservationEmbedding(row: ObservationEmbeddingRow): ObservationEmbedding {
+  return {
+    observationId: row.observationId,
+    projectId: row.projectId,
+    embeddingModel: row.embeddingModel,
+    embeddingDimensions: row.embeddingDimensions,
+    embeddingInput: row.embeddingInput,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
+/**
+ * Normalizes BM25 ranks into a descending 0..1 style score.
+ *
+ * @param rank - Raw BM25 rank.
+ * @param index - Positional fallback index.
+ * @returns Normalized lexical score.
+ */
+export function normalizeRank(rank: number | null, index: number): number {
+  const safeRank = typeof rank === "number" && Number.isFinite(rank) ? Math.abs(rank) : index + 1
+  return 1 / (1 + safeRank)
+}
+
+/**
+ * Converts cosine distance into a descending similarity score.
+ *
+ * @param distance - sqlite-vec cosine distance.
+ * @returns Normalized semantic score.
+ */
+export function normalizeDistance(distance: number): number {
+  if (!Number.isFinite(distance)) {
+    return 0
+  }
+
+  return Math.max(0, 1 - distance)
+}
+
+/**
+ * Computes cosine similarity between two numeric vectors.
+ *
+ * @param left - Left-hand vector.
+ * @param right - Right-hand vector.
+ * @returns Similarity score in the 0..1 range when possible.
+ */
+export function cosineSimilarity(left: number[], right: number[]): number {
+  if (left.length === 0 || left.length !== right.length) {
+    return 0
+  }
+
+  let dotProduct = 0
+  let leftNorm = 0
+  let rightNorm = 0
+
+  for (let index = 0; index < left.length; index += 1) {
+    const leftValue = left[index] ?? 0
+    const rightValue = right[index] ?? 0
+    dotProduct += leftValue * rightValue
+    leftNorm += leftValue * leftValue
+    rightNorm += rightValue * rightValue
+  }
+
+  if (leftNorm === 0 || rightNorm === 0) {
+    return 0
+  }
+
+  const similarity = dotProduct / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm))
+  return Math.max(0, Math.min(1, similarity))
 }
