@@ -9,9 +9,11 @@ Persistent cross-session memory plugin for OpenCode, designed as a port of claud
 - Crash-safe pending queue for tool outputs
 - Async AI compression pipeline (in-process)
 - Session summaries
+- Global persona memory (cross-project user preferences)
 - Retrieval tools: `memory_search`, `memory_timeline`, `memory_get`
 - Write tool: `memory_add` (explicit agent-controlled persistence)
 - Delete tool: `memory_forget` (with preview + confirmation token)
+- Persona tools: `memory_persona_get`, `memory_persona_update`, `memory_persona_patch`, `memory_persona_clear`
 - System context injection via `experimental.chat.system.transform`
 
 ## Install
@@ -67,6 +69,19 @@ Example:
 ```
 
 Semantic search is enabled by default. The plugin keeps FTS5 as the lexical base and uses local-only embeddings (`@huggingface/transformers`) plus `sqlite-vec` as the preferred semantic layer. If native vector loading is unavailable in the current Bun runtime, the plugin falls back to semantic reranking in JavaScript over persisted embeddings while preserving the same public behavior.
+
+## Persona Memory
+
+The plugin maintains a global user persona that persists across all projects. It learns automatically from conversations and is injected into every session's context.
+
+| Tool | Description |
+|------|-------------|
+| `memory_persona_get` | View the current persona |
+| `memory_persona_update` | Replace the persona content |
+| `memory_persona_patch` | Append new facts to the persona |
+| `memory_persona_clear` | Clear the persona memory |
+
+The persona is automatically learned from user messages (every 3 turns) and injected as `<persona_context>` before project memory in the system prompt.
 
 ## Development
 
