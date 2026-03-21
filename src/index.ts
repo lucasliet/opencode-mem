@@ -16,6 +16,7 @@ import { createMemoryForgetTool } from "./tools/memory-forget"
 import { createMemorySearchTool } from "./tools/memory-search"
 import { createMemoryStatsTool } from "./tools/memory-stats"
 import { createMemoryTimelineTool } from "./tools/memory-timeline"
+import { createMemoryAddTool } from "./tools/memory-add"
 import type { MemoryPluginOptions, RuntimeState } from "./types"
 
 /**
@@ -91,6 +92,7 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
         memory_search: createMemorySearchTool(store, pluginConfig, embeddingProvider, now),
         memory_timeline: createMemoryTimelineTool(store),
         memory_get: createMemoryGetTool(store),
+        memory_add: createMemoryAddTool(store, scope, embeddingProvider, now),
         memory_forget: createMemoryForgetTool(store, now),
         memory_stats: createMemoryStatsTool(store, now),
       },

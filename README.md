@@ -10,6 +10,8 @@ Persistent cross-session memory plugin for OpenCode, designed as a port of claud
 - Async AI compression pipeline (in-process)
 - Session summaries
 - Retrieval tools: `memory_search`, `memory_timeline`, `memory_get`
+- Write tool: `memory_add` (explicit agent-controlled persistence)
+- Delete tool: `memory_forget` (with preview + confirmation token)
 - System context injection via `experimental.chat.system.transform`
 
 ## Install
@@ -79,6 +81,3 @@ bun run build
 
 - This package targets OpenCode plugin APIs currently exposed by `@opencode-ai/plugin@1.2.x`.
 - The architecture DAQ in `docs/DAQ-opencode-memory-plugin.md` is the source of truth for the hybrid rollout.
-- DAQ legacy naming (`beforePrompt`, `afterResponse`) is mapped in this implementation to:
-  - `tool.execute.after` for capture
-  - `experimental.chat.system.transform` for injection

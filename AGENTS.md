@@ -28,6 +28,7 @@ Source layout:
 - `src/tools/memory-search.ts` — hybrid memory search with low-quality `[?]` marker
 - `src/tools/memory-timeline.ts` — chronological browsing with cursor pagination
 - `src/tools/memory-get.ts` — full observation fetch by IDs with `rawFallback` display
+- `src/tools/memory-add.ts` — explicit agent-controlled persistence with quality `high`
 - `src/tools/memory-forget.ts` — deletion with preview (`confirm=false`) / execute (`confirm=true`)
 - `src/tools/memory-stats.ts` — observability: counts, quality distribution, tool usage, DB size
 

@@ -2,8 +2,8 @@
 ## Plugin de Memória Persistente Cross-Session para OpenCode
 ### Portabilidade do claude-mem -> `opencode-memory-plugin`
 
-**Versão:** 1.2.0  
-**Data:** 2026-03-19  
+**Versão:** 1.3.0
+**Data:** 2026-03-21
 **Status:** Implementado no core textual; arquitetura híbrida aprovada e em rollout  
 **Autor:** Lucas
 
@@ -29,6 +29,7 @@ Adicionar memória persistente entre sessões no OpenCode para reduzir repetiç�
 - Resumos de sessão em `session_summaries`
 - Progressive disclosure com `memory_search`, `memory_timeline`, `memory_get`
 - Deleção governada com preview + token de confirmação em `memory_forget`
+- Gravação deliberada via `memory_add` (persistência direta pelo agente, quality alta, bypass do pipeline)
 
 ### 2.2 Alvo aprovado para esta fase
 
@@ -109,11 +110,12 @@ OpenCode Server (Bun)
    │  ├─ semantic search (sqlite-vec)
    │  └─ hybrid ranking
    ├─ Tools
-   │  ├─ memory_search
-   │  ├─ memory_timeline
-   │  ├─ memory_get
-   │  ├─ memory_forget
-   │  └─ memory_stats
+    │  ├─ memory_search
+    │  ├─ memory_timeline
+    │  ├─ memory_get
+    │  ├─ memory_add
+    │  ├─ memory_forget
+    │  └─ memory_stats
    └─ SQLite (~/.config/opencode/memory/memory.db)
       ├─ core tables
       ├─ observations_fts + triggers
@@ -160,6 +162,7 @@ src/
     ├── memory-search.ts
     ├── memory-timeline.ts
     ├── memory-get.ts
+    ├── memory-add.ts
     ├── memory-forget.ts
     └── memory-stats.ts
 ```
@@ -216,6 +219,10 @@ Os módulos em `src/embeddings/` e `src/storage/vector.ts` representam o alvo ar
 7. Em nova sessão, `experimental.chat.system.transform` injeta contexto recente e, se habilitado, contexto semântico conservador
 8. `memory_search` usa ranking híbrido quando disponível; caso contrário, volta para FTS-only
 9. `memory_get` continua sendo a expansão detalhada, inclusive para memórias descobertas semanticamente
+
+Caminho alternativo de escrita:
+
+- `memory_add` permite ao agente persistir diretamente observações com quality `high`, bypassando o pipeline de compressão. Útil para decisões explícitas e contexto importante que o agente julga digno de persistência.
 
 ---
 
@@ -323,7 +330,7 @@ Warmup de embeddings, leitura de config runtime do OpenCode e chamadas de modelo
 
 ---
 
-## 15. Estado de implementação vs arquitetura 1.2
+## 15. Estado de implementação vs arquitetura 1.3
 
 ### 15.1 Concluído
 
@@ -334,6 +341,7 @@ Warmup de embeddings, leitura de config runtime do OpenCode e chamadas de modelo
 - sumarização de sessão
 - injeção automática de contexto por recência
 - ferramentas de busca/linha do tempo/fetch/deleção/stats
+- gravação deliberada via `memory_add`
 - quality gate e raw fallback
 - logs de deleção e estatísticas de uso
 
@@ -392,6 +400,7 @@ Após `build`, reiniciar o OpenCode para recarregar `dist/index.js`.
 - Schema e init DB: `src/storage/schema.ts` e `src/storage/db.ts`
 - Persistência e buscas: `src/storage/store.ts`
 - Deleção segura: `src/tools/memory-forget.ts`
+- Gravação deliberada: `src/tools/memory-add.ts`
 - Busca híbrida: `src/tools/memory-search.ts`
 - Observabilidade: `src/tools/memory-stats.ts`
 
