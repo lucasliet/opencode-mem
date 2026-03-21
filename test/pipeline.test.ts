@@ -72,6 +72,7 @@ function createNoopState(): RuntimeState {
     injectedSessionIds: new Set(),
     knownSessionIds: new Set(),
     summaryTimers: new Map(),
+    personaLearnCount: 0,
     shutdownRegistered: false,
     disposed: false,
   }

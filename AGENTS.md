@@ -9,28 +9,35 @@ Source layout:
 - `src/config.ts` — config loading from filesystem and env vars (no SDK API calls)
 - `src/utils.ts` — pure utility functions (no side effects)
 - `src/logger.ts` — `MemoryLogger` wrapping `client.app.log`
-- `src/storage/schema.ts` — Drizzle table definitions for textual memory and vector metadata
+- `src/storage/schema.ts` — Drizzle table definitions for textual memory, vector metadata, and persona memory
 - `src/storage/db.ts` — SQLite init, WAL mode, FTS5 virtual table/triggers, and `sqlite-vec` availability handling
 - `src/storage/store.ts` — `MemoryStore` class with CRUD, hybrid search, deletion, and stats methods
+- `src/storage/persona.ts` — `PersonaStore` class with global user persona CRUD
 - `src/compression/privacy.ts` — `stripSensitiveTokens()`
 - `src/compression/prompts.ts` — compression and session summary prompt builders
 - `src/compression/parser.ts` — `parseObservation()` and `parseSessionSummary()` with fallback
 - `src/compression/quality.ts` — `validateObservation()` quality gate (high/medium/low)
 - `src/compression/pipeline.ts` — `CompressionPipeline` with queue, retry, orphan recovery, and post-persist embedding stage
 - `src/compression/compressor.ts` — `LanguageModelObservationCompressor` and `SessionPromptObservationCompressor`
+- `src/compression/persona-extractor.ts` — `PersonaExtractor` for extracting persona facts from conversations
+- `src/compression/persona-prompts.ts` — prompts for persona extraction and summarization
 - `src/embeddings/` — local embedding provider, text builder, and embedding contracts
 - `src/hooks/tool-after.ts` — captures tool outputs via `tool.execute.after`
-- `src/hooks/system-transform.ts` — injects memory context via `experimental.chat.system.transform`
+- `src/hooks/system-transform.ts` — injects memory and persona context via `experimental.chat.system.transform`
 - `src/hooks/events.ts` — session lifecycle via `event`, debounced summaries, shutdown
-- `src/hooks/chat-message.ts` — captures user prompts via `chat.message`
+- `src/hooks/chat-message.ts` — captures user prompts and learns persona facts via `chat.message`
 - `src/hooks/compaction.ts` — memory anchors via `experimental.session.compacting`
-- `src/context/generator.ts` — `generateSessionContext()` and `generateCompactionContext()` with conservative semantic enrichment
+- `src/context/generator.ts` — `generateSessionContext()` and `generateCompactionContext()` with conservative semantic enrichment and persona injection
 - `src/tools/memory-search.ts` — hybrid memory search with low-quality `[?]` marker
 - `src/tools/memory-timeline.ts` — chronological browsing with cursor pagination
 - `src/tools/memory-get.ts` — full observation fetch by IDs with `rawFallback` display
 - `src/tools/memory-add.ts` — explicit agent-controlled persistence with quality `high`
 - `src/tools/memory-forget.ts` — deletion with preview (`confirm=false`) / execute (`confirm=true`)
 - `src/tools/memory-stats.ts` — observability: counts, quality distribution, tool usage, DB size
+- `src/tools/memory-persona-get.ts` — view the global user persona memory
+- `src/tools/memory-persona-update.ts` — replace the global user persona memory
+- `src/tools/memory-persona-patch.ts` — append facts to the existing persona
+- `src/tools/memory-persona-clear.ts` — clear the global user persona memory
 
 ## Build, Test, and Development Commands
 Run `bun install` to install dependencies. Use `bun run typecheck` to validate both app and test TypeScript configs without emitting files. Use `bun test` to run the Bun test suite in `test/`. Use `bun run build` to compile the package into `dist/` with `tsc -p tsconfig.json`. For a clean contributor loop, prefer: `bun run typecheck && bun test && bun run build`.
@@ -100,6 +107,9 @@ Six SQLite tables (all project-scoped via `project_id`):
 - `user_prompts` — raw user prompt text for summarization
 - `deletion_log` — LGPD compliance audit trail for all deletions
 - `tool_usage_stats` — per-session tool call counters for observability
+
+One global table (no project scoping):
+- `persona_memory` — learned user persona (communication style, code preferences, work patterns)
 
 FTS5 virtual table `observations_fts` indexes: `title`, `subtitle`, `narrative`, `facts`, `concepts`, `files_involved`. Sync maintained via `AFTER INSERT/DELETE/UPDATE` triggers.
 

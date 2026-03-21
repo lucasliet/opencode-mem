@@ -225,11 +225,20 @@ export interface EmbeddingProvider {
   getDimensions(): number
 }
 
+export interface PersonaMemory {
+  id: string
+  content: string
+  version: number
+  createdAt: number
+  updatedAt: number
+}
+
 export interface RuntimeState {
   internalSessionIds: Set<string>
   injectedSessionIds: Set<string>
   knownSessionIds: Set<string>
   summaryTimers: Map<string, ReturnType<typeof setTimeout>>
+  personaLearnCount: number
   shutdownRegistered: boolean
   disposed: boolean
 }

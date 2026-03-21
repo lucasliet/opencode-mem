@@ -1,6 +1,7 @@
 import { formatSummaryBlock } from "../compression/prompts"
 import { buildSemanticQueryText } from "../embeddings/text"
 import { MemoryStore } from "../storage/store"
+import type { PersonaStore } from "../storage/persona"
 import type { EmbeddingProvider, PluginConfig } from "../types"
 import { formatRelativeTime, normalizeWhitespace } from "../utils"
 
@@ -11,6 +12,7 @@ import { formatRelativeTime, normalizeWhitespace } from "../utils"
  * @param sessionId - Active OpenCode session identifier.
  * @param config - Plugin configuration.
  * @param embeddingProvider - Optional local embedding provider.
+ * @param personaStore - Persona storage for user persona injection.
  * @param now - Clock function.
  * @returns A context block or an empty string.
  */
@@ -19,11 +21,28 @@ export async function generateSessionContext(
   sessionId: string,
   config: PluginConfig,
   embeddingProvider: EmbeddingProvider | null,
+  personaStore: PersonaStore,
   now: () => number,
 ): Promise<string> {
   const recentObservations = await store.getRecentObservations(config.indexSize)
-  if (!recentObservations.length) {
+  const persona = await personaStore.getPersona()
+  const personaBlock = persona?.content
+    ? [
+      "<persona_context>",
+      "## User Persona (learned from previous interactions)",
+      "",
+      persona.content,
+      "</persona_context>",
+      "",
+    ].join("\n")
+    : ""
+
+  if (!recentObservations.length && !persona) {
     return ""
+  }
+
+  if (!recentObservations.length) {
+    return personaBlock
   }
 
   const summaries = await store.getRecentSummaries(config.summaryLookback)
@@ -54,6 +73,7 @@ export async function generateSessionContext(
     : ""
 
   const sections = [
+    personaBlock,
     "<memory_context>",
     "You have access to persistent memory from previous OpenCode sessions for this project.",
     "",
@@ -73,6 +93,7 @@ export async function generateSessionContext(
     "- memory_get: fetch full details for specific observation IDs.",
     "- memory_forget: preview and delete observations by criteria.",
     "- memory_stats: inspect memory health and usage metrics.",
+    "- memory_persona_update: update the global user persona memory.",
     "Use memory tools when the user references prior work, asks what changed before, or when historical context could improve correctness.",
     "</memory_context>",
   ].filter(Boolean)

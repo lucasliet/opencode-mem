@@ -198,6 +198,16 @@ export function ensureSchema(sqlite: Database, config: PluginConfig): VectorBack
   }
 
   sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS persona_memory (
+      id TEXT PRIMARY KEY,
+      content TEXT NOT NULL DEFAULT '',
+      version INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `)
+
+  sqlite.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts USING fts5(
       title,
       subtitle,

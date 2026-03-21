@@ -138,11 +138,23 @@ export const toolUsageStats = sqliteTable(
   (table) => [index("tool_usage_stats_session_tool_idx").on(table.projectId, table.sessionId, table.toolName)],
 )
 
+export const personaMemory = sqliteTable(
+  "persona_memory",
+  {
+    id: text("id").primaryKey(),
+    content: text("content").notNull().default(""),
+    version: integer("version").notNull().default(1),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+)
+
 export const schema = {
   deletionLog,
   observationEmbeddings,
   observations,
   pendingMessages,
+  personaMemory,
   sessionSummaries,
   toolUsageStats,
   userPrompts,
@@ -161,3 +173,5 @@ export type DeletionLogRow = typeof deletionLog.$inferSelect
 export type ToolUsageStatRow = typeof toolUsageStats.$inferSelect
 
 export type UserPromptRow = typeof userPrompts.$inferSelect
+
+export type PersonaMemoryRow = typeof personaMemory.$inferSelect

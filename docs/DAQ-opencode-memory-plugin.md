@@ -2,7 +2,7 @@
 ## Plugin de Memória Persistente Cross-Session para OpenCode
 ### Portabilidade do claude-mem -> `opencode-memory-plugin`
 
-**Versão:** 1.3.0
+**Versão:** 1.4.0
 **Data:** 2026-03-21
 **Status:** Implementado no core textual; arquitetura híbrida aprovada e em rollout  
 **Autor:** Lucas
@@ -30,6 +30,8 @@ Adicionar memória persistente entre sessões no OpenCode para reduzir repetiç�
 - Progressive disclosure com `memory_search`, `memory_timeline`, `memory_get`
 - Deleção governada com preview + token de confirmação em `memory_forget`
 - Gravação deliberada via `memory_add` (persistência direta pelo agente, quality alta, bypass do pipeline)
+- Persona memory global com aprendizado automático via `memory_persona_update`
+- Injeção de persona no contexto de todas as sessões via `<persona_context>`
 
 ### 2.2 Alvo aprovado para esta fase
 
@@ -77,8 +79,8 @@ Mapeamento final (OpenCode SDK v1.2.x):
 | Hook/Event | Papel |
 |---|---|
 | `tool.execute.after` | Captura output de tools e enfileira compressão |
-| `experimental.chat.system.transform` | Injeta memória cross-session no system prompt |
-| `chat.message` | Persiste prompts do usuário |
+| `experimental.chat.system.transform` | Injeta memória cross-session e persona no system prompt |
+| `chat.message` | Persiste prompts do usuário e aprende fatos de persona |
 | `event` | Lifecycle de sessão (`created`, `idle`, `compacted`, `deleted`) |
 | `experimental.session.compacting` | Injeta anchors de memória no processo de compaction |
 
@@ -101,6 +103,10 @@ OpenCode Server (Bun)
    │  ├─ parser + quality gate
    │  ├─ observations + rawFallback
    │  └─ embedding stage (best-effort, post-persist)
+   ├─ Persona Engine
+   │  ├─ PersonaExtractor (extração de fatos)
+   │  ├─ PersonaStore (CRUD global)
+   │  └─ merge dedup + summarization
    ├─ Embeddings
    │  ├─ embedding text builder
    │  ├─ local embedding provider
@@ -109,15 +115,20 @@ OpenCode Server (Bun)
    │  ├─ FTS5 search
    │  ├─ semantic search (sqlite-vec)
    │  └─ hybrid ranking
-   ├─ Tools
+    ├─ Tools
     │  ├─ memory_search
     │  ├─ memory_timeline
     │  ├─ memory_get
     │  ├─ memory_add
     │  ├─ memory_forget
-    │  └─ memory_stats
+    │  ├─ memory_stats
+    │  ├─ memory_persona_get
+    │  ├─ memory_persona_update
+    │  ├─ memory_persona_patch
+    │  └─ memory_persona_clear
    └─ SQLite (~/.config/opencode/memory/memory.db)
       ├─ core tables
+      ├─ persona_memory (global, sem project_id)
       ├─ observations_fts + triggers
       └─ sqlite-vec structures for observation embeddings
 ```
@@ -145,7 +156,9 @@ src/
 │   ├── parser.ts
 │   ├── prompts.ts
 │   ├── privacy.ts
-│   └── quality.ts
+│   ├── quality.ts
+│   ├── persona-extractor.ts
+│   └── persona-prompts.ts
 ├── context/
 │   └── generator.ts
 ├── embeddings/
@@ -157,6 +170,7 @@ src/
 │   ├── db.ts
 │   ├── schema.ts
 │   ├── store.ts
+│   ├── persona.ts
 │   └── vector.ts
 └── tools/
     ├── memory-search.ts
@@ -164,7 +178,11 @@ src/
     ├── memory-get.ts
     ├── memory-add.ts
     ├── memory-forget.ts
-    └── memory-stats.ts
+    ├── memory-stats.ts
+    ├── memory-persona-get.ts
+    ├── memory-persona-update.ts
+    ├── memory-persona-patch.ts
+    └── memory-persona-clear.ts
 ```
 
 Os módulos em `src/embeddings/` e `src/storage/vector.ts` representam o alvo arquitetural desta fase e podem ser introduzidos incrementalmente ao longo do rollout.
@@ -192,6 +210,9 @@ Os módulos em `src/embeddings/` e `src/storage/vector.ts` representam o alvo ar
 
 6. `tool_usage_stats`  
    Contadores por sessão/tool para observabilidade
+
+7. `persona_memory`  
+   Persona global do usuário (sem project_id). Armazena preferências de código, estilo de comunicação, padrões de trabalho e contexto pessoal aprendidos automaticamente.
 
 ### 8.2 Índices de busca
 
@@ -224,6 +245,14 @@ Caminho alternativo de escrita:
 
 - `memory_add` permite ao agente persistir diretamente observações com quality `high`, bypassando o pipeline de compressão. Útil para decisões explícitas e contexto importante que o agente julga digno de persistência.
 
+Caminho de persona:
+
+- `chat.message` captura mensagens do usuário periodicamente (a cada 3 turnos)
+- `PersonaExtractor` extrai fatos sobre o usuário (preferências, padrões, contexto)
+- `PersonaStore.mergeFacts()` deduplica e persiste na tabela `persona_memory`
+- Injeção automática via `<persona_context>` antes de `<memory_context>` em todas as sessões
+- `memory_persona_update` permite atualização manual (replace, append, clear)
+
 ---
 
 ## 10. Busca híbrida
@@ -255,6 +284,7 @@ Quando semântica estiver desabilitada, indisponível ou sem embeddings suficien
 
 `experimental.chat.system.transform` deve combinar, com orçamento controlado:
 
+0. persona do usuário (aprendida automaticamente, via `<persona_context>`)
 1. observações recentes
 2. observações semanticamente relevantes ao prompt atual
 3. resumos de sessão recentes
@@ -265,6 +295,15 @@ Quando semântica estiver desabilitada, indisponível ou sem embeddings suficien
 - preferência por qualidade `high` e `medium`
 - fallback automático para o comportamento atual se a busca vetorial falhar
 - `memory_get` continua como caminho detalhado para expandir contexto quando necessário
+- persona memory limitada a 10k caracteres para evitar overhead
+
+### 11.3 Persona memory
+
+- tabela global (sem project_id)
+- aprendizado incremental via chat.message (a cada 3 turnos)
+- merge com deduplicação de fatos
+- summarização automática quando excede 10k caracteres
+- injeção automática em todas as sessões
 
 ---
 
@@ -330,7 +369,7 @@ Warmup de embeddings, leitura de config runtime do OpenCode e chamadas de modelo
 
 ---
 
-## 15. Estado de implementação vs arquitetura 1.3
+## 15. Estado de implementação vs arquitetura 1.4
 
 ### 15.1 Concluído
 
@@ -344,6 +383,9 @@ Warmup de embeddings, leitura de config runtime do OpenCode e chamadas de modelo
 - gravação deliberada via `memory_add`
 - quality gate e raw fallback
 - logs de deleção e estatísticas de uso
+- persona memory global com aprendizado automático
+- ferramenta `memory_persona_update` (replace/append/clear)
+- injeção de persona em todas as sessões
 
 ### 15.2 Em rollout
 
@@ -392,17 +434,24 @@ Após `build`, reiniciar o OpenCode para recarregar `dist/index.js`.
 - Config e defaults: `src/config.ts`
 - Tipos compartilhados: `src/types.ts`
 - Captura de tools: `src/hooks/tool-after.ts`
-- Captura de prompts: `src/hooks/chat-message.ts`
+- Captura de prompts e persona: `src/hooks/chat-message.ts`
 - Injeção de contexto: `src/hooks/system-transform.ts` e `src/context/generator.ts`
 - Lifecycle e summaries: `src/hooks/events.ts`
 - Pipeline de compressão: `src/compression/pipeline.ts`
 - Quality gate: `src/compression/quality.ts`
+- Extração de persona: `src/compression/persona-extractor.ts`
+- Prompts de persona: `src/compression/persona-prompts.ts`
 - Schema e init DB: `src/storage/schema.ts` e `src/storage/db.ts`
 - Persistência e buscas: `src/storage/store.ts`
+- Persona store: `src/storage/persona.ts`
 - Deleção segura: `src/tools/memory-forget.ts`
 - Gravação deliberada: `src/tools/memory-add.ts`
 - Busca híbrida: `src/tools/memory-search.ts`
 - Observabilidade: `src/tools/memory-stats.ts`
+- Persona get: `src/tools/memory-persona-get.ts`
+- Persona update: `src/tools/memory-persona-update.ts`
+- Persona patch: `src/tools/memory-persona-patch.ts`
+- Persona clear: `src/tools/memory-persona-clear.ts`
 
 ---
 

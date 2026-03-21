@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { generateSessionContext } from "../src/context/generator"
 import { createMemoryDatabase } from "../src/storage/db"
 import { MemoryStore } from "../src/storage/store"
+import { PersonaStore } from "../src/storage/persona"
 import type { EmbeddingProvider, Observation, PluginConfig, ProjectScope, UserPromptRecord } from "../src/types"
 
 function createPluginConfig(): PluginConfig {
@@ -101,8 +102,9 @@ describe("context generator", () => {
       updatedAt: observation.createdAt,
     }, observation, [0.1, 0.2, 0.3, 0.4])
     await store.saveUserPrompt(createPrompt())
+    const personaStore = new PersonaStore(database, () => 2_000)
 
-    const context = await generateSessionContext(store, "session_1", config, embeddingProvider, () => 2_000)
+    const context = await generateSessionContext(store, "session_1", config, embeddingProvider, personaStore, () => 2_000)
 
     expect(context).toContain("Semantically Relevant Observations")
     expect(context).toContain("obs_semantic")
@@ -120,8 +122,9 @@ describe("context generator", () => {
     }
 
     await store.saveObservation(observation)
+    const personaStore = new PersonaStore(database, () => 2_000)
 
-    const context = await generateSessionContext(store, "session_1", config, embeddingProvider, () => 2_000)
+    const context = await generateSessionContext(store, "session_1", config, embeddingProvider, personaStore, () => 2_000)
 
     expect(context).not.toContain("Semantically Relevant Observations")
     expect(context).toContain("Recent Observation Index")

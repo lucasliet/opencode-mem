@@ -1,6 +1,7 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin"
 import { loadConfig } from "./config"
 import { LanguageModelObservationCompressor, SessionPromptObservationCompressor } from "./compression/compressor"
+import { PersonaExtractor } from "./compression/persona-extractor"
 import { CompressionPipeline } from "./compression/pipeline"
 import { createCompactionHook } from "./hooks/compaction"
 import { createEventHook, registerShutdown } from "./hooks/events"
@@ -11,12 +12,17 @@ import { LocalEmbeddingProvider } from "./embeddings/local-provider"
 import { MemoryLogger } from "./logger"
 import { createMemoryDatabase } from "./storage/db"
 import { MemoryStore } from "./storage/store"
+import { PersonaStore } from "./storage/persona"
 import { createMemoryGetTool } from "./tools/memory-get"
 import { createMemoryForgetTool } from "./tools/memory-forget"
 import { createMemorySearchTool } from "./tools/memory-search"
 import { createMemoryStatsTool } from "./tools/memory-stats"
 import { createMemoryTimelineTool } from "./tools/memory-timeline"
 import { createMemoryAddTool } from "./tools/memory-add"
+import { createMemoryPersonaGetTool } from "./tools/memory-persona-get"
+import { createMemoryPersonaUpdateTool } from "./tools/memory-persona-update"
+import { createMemoryPersonaPatchTool } from "./tools/memory-persona-patch"
+import { createMemoryPersonaClearTool } from "./tools/memory-persona-clear"
 import type { MemoryPluginOptions, RuntimeState } from "./types"
 
 /**
@@ -39,12 +45,14 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
     }
     const database = await createMemoryDatabase(pluginConfig)
     const store = new MemoryStore(database, scope, now)
+    const personaStore = new PersonaStore(database, now)
     const logger = new MemoryLogger(input.client, input.directory, pluginConfig.logLevel)
     const state: RuntimeState = {
       internalSessionIds: new Set(),
       injectedSessionIds: new Set(),
       knownSessionIds: new Set(),
       summaryTimers: new Map(),
+      personaLearnCount: 0,
       shutdownRegistered: false,
       disposed: false,
     }
@@ -54,6 +62,8 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
       (options.languageModel
         ? new LanguageModelObservationCompressor(options.languageModel)
         : new SessionPromptObservationCompressor(input, state))
+
+    const extractor = new PersonaExtractor(input, state)
 
     const embeddingProvider = options.embeddingProvider ?? (pluginConfig.enableSemanticSearch
       ? new LocalEmbeddingProvider(
@@ -95,9 +105,13 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
         memory_add: createMemoryAddTool(store, scope, embeddingProvider, now),
         memory_forget: createMemoryForgetTool(store, now),
         memory_stats: createMemoryStatsTool(store, now),
+        memory_persona_get: createMemoryPersonaGetTool(personaStore, now),
+        memory_persona_update: createMemoryPersonaUpdateTool(personaStore),
+        memory_persona_patch: createMemoryPersonaPatchTool(personaStore),
+        memory_persona_clear: createMemoryPersonaClearTool(personaStore),
       },
       event: createEventHook(pipeline, pluginConfig, state, logger),
-      "chat.message": createChatMessageHook(store, scope, state, now),
+      "chat.message": createChatMessageHook(store, scope, personaStore, extractor, state, now, logger),
       "tool.execute.after": createToolExecuteAfterHook(
         store,
         pipeline,
@@ -107,7 +121,7 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
         logger,
         now,
       ),
-      "experimental.chat.system.transform": createSystemTransformHook(store, pluginConfig, embeddingProvider, state, now),
+      "experimental.chat.system.transform": createSystemTransformHook(store, pluginConfig, embeddingProvider, personaStore, state, now),
       "experimental.session.compacting": createCompactionHook(store, state, now),
     }
   }

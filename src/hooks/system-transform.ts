@@ -1,6 +1,7 @@
 import type { Hooks } from "@opencode-ai/plugin"
 import { generateSessionContext } from "../context/generator"
 import { MemoryStore } from "../storage/store"
+import type { PersonaStore } from "../storage/persona"
 import type { EmbeddingProvider, PluginConfig, RuntimeState } from "../types"
 
 /**
@@ -9,6 +10,7 @@ import type { EmbeddingProvider, PluginConfig, RuntimeState } from "../types"
  * @param store - Memory store.
  * @param config - Plugin configuration.
  * @param embeddingProvider - Optional local embedding provider.
+ * @param personaStore - Persona storage.
  * @param state - Runtime state.
  * @param now - Clock function.
  * @returns Hook implementation.
@@ -17,6 +19,7 @@ export function createSystemTransformHook(
   store: MemoryStore,
   config: PluginConfig,
   embeddingProvider: EmbeddingProvider | null,
+  personaStore: PersonaStore,
   state: RuntimeState,
   now: () => number,
 ): NonNullable<Hooks["experimental.chat.system.transform"]> {
@@ -26,7 +29,7 @@ export function createSystemTransformHook(
       return
     }
 
-    const context = await generateSessionContext(store, sessionId, config, embeddingProvider, now)
+    const context = await generateSessionContext(store, sessionId, config, embeddingProvider, personaStore, now)
     if (!context) {
       return
     }
