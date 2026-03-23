@@ -147,8 +147,14 @@ Or set `OPENCODE_MEMORY_CONFIG=/absolute/path/to/config.json`.
   "semanticContextMaxResults": 3,
   "semanticMinScore": 0.55,
   "hybridSearchAlpha": 0.65,
+  "minContentLength": 100,
   "compressionBatchSize": 10,
   "retentionDays": 90,
+  "contextMaxTokens": 2000,
+  "summaryLookback": 3,
+  "orphanThresholdMs": 300000,
+  "queuePollIntervalMs": 250,
+  "sessionSummaryDebounceMs": 1500,
   "logLevel": "info"
 }
 ```
@@ -171,6 +177,12 @@ Or set `OPENCODE_MEMORY_CONFIG=/absolute/path/to/config.json`.
 | `hybridSearchAlpha` | `0.65` | Weight for hybrid search (0=lexical, 1=semantic) |
 | `compressionBatchSize` | `10` | Pending messages processed per batch |
 | `retentionDays` | `90` | Days before observations are auto-deleted |
+| `minContentLength` | `100` | Minimum tool output length to capture |
+| `contextMaxTokens` | `2000` | Token budget for injected memory context |
+| `summaryLookback` | `3` | Max session summaries included in context |
+| `orphanThresholdMs` | `300000` | Pending message age before orphan recovery (5 min) |
+| `queuePollIntervalMs` | `250` | Compression queue polling interval |
+| `sessionSummaryDebounceMs` | `1500` | Debounce delay for session summary generation |
 | `logLevel` | `info` | Log verbosity: debug/info/warn/error |
 
 ## Worktree Support
