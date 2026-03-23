@@ -13,6 +13,7 @@ import type { EmbeddingProvider, PluginConfig, RuntimeState } from "../types"
  * @param personaStore - Persona storage.
  * @param state - Runtime state.
  * @param now - Clock function.
+ * @param allProjectIds - Project ID list for worktree multi-project queries.
  * @returns Hook implementation.
  */
 export function createSystemTransformHook(
@@ -22,6 +23,7 @@ export function createSystemTransformHook(
   personaStore: PersonaStore,
   state: RuntimeState,
   now: () => number,
+  allProjectIds: string[],
 ): NonNullable<Hooks["experimental.chat.system.transform"]> {
   return async (input, output) => {
     const sessionId = input.sessionID
@@ -29,7 +31,7 @@ export function createSystemTransformHook(
       return
     }
 
-    const context = await generateSessionContext(store, sessionId, config, embeddingProvider, personaStore, now)
+    const context = await generateSessionContext(store, sessionId, config, embeddingProvider, personaStore, now, allProjectIds)
     if (!context) {
       return
     }

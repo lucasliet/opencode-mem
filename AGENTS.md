@@ -27,7 +27,9 @@ Source layout:
 - `src/hooks/events.ts` — session lifecycle via `event`, debounced summaries, shutdown
 - `src/hooks/chat-message.ts` — captures user prompts and learns persona facts via `chat.message`
 - `src/hooks/compaction.ts` — memory anchors via `experimental.session.compacting`
-- `src/context/generator.ts` — `generateSessionContext()` and `generateCompactionContext()` with conservative semantic enrichment and persona injection
+- `src/context/generator.ts` — `generateSessionContext()` and `generateCompactionContext()` with conservative semantic enrichment, token economics header, and persona injection
+- `src/context/prior-session.ts` — `getPriorSessionContext()` for "Where You Left Off" continuity between sessions
+- `src/worktree.ts` — `detectWorktree()` for git worktree detection and parent repo resolution
 - `src/tools/memory-search.ts` — hybrid memory search with low-quality `[?]` marker
 - `src/tools/memory-timeline.ts` — chronological browsing with cursor pagination
 - `src/tools/memory-get.ts` — full observation fetch by IDs with `rawFallback` display
@@ -114,5 +116,16 @@ One global table (no project scoping):
 FTS5 virtual table `observations_fts` indexes: `title`, `subtitle`, `narrative`, `facts`, `concepts`, `files_involved`. Sync maintained via `AFTER INSERT/DELETE/UPDATE` triggers.
 
 Hybrid memory architecture keeps FTS5 mandatory for lexical retrieval, deletion governance, and fallback. `sqlite-vec` is the preferred local vector backend for semantic retrieval, but the plugin must degrade cleanly when native extension loading is unavailable in Bun. In that case, keep embeddings persisted locally and use a JavaScript semantic fallback instead of breaking retrieval.
+
+## Worktree Support
+
+When the plugin detects a git worktree (`.git` is a file pointing to a parent repo), it queries observations and summaries from both the parent repo and the worktree project. This enables continuity when the user branches into a worktree — prior observations from `main` remain visible. Detection uses `detectWorktree()` from `src/worktree.ts`, and multi-project queries use `getRecentObservationsMulti()` / `getRecentSummariesMulti()` from `MemoryStore`.
+
+## Context Injection Structure
+
+`generateSessionContext()` builds a system prompt block with:
+1. `<persona_context>` — learned user persona
+2. `## Where You Left Off` — summary of the most recent prior session (completed + learned + next steps)
+3. `<memory_context>` — memory status header with token economics, observation index, detailed samples, semantic observations, session summaries, and available tools footer
 
 New databases get all columns inline via `CREATE TABLE`. Existing databases from before the `quality`/`raw_fallback` additions are migrated by `ensureSchema()` via `ALTER TABLE ... ADD COLUMN` with try/catch. Any vector-layer rollout must preserve this pattern: safe startup, idempotent migration, and no plugin-init dependence on remote services or SDK calls.

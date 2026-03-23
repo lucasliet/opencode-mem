@@ -4,6 +4,7 @@ import { MemoryStore } from "../storage/store"
 import type { PersonaStore } from "../storage/persona"
 import type { EmbeddingProvider, PluginConfig } from "../types"
 import { formatRelativeTime, normalizeWhitespace } from "../utils"
+import { getPriorSessionContext } from "./prior-session"
 
 /**
  * Generates the memory context injected into the system prompt.
@@ -14,6 +15,7 @@ import { formatRelativeTime, normalizeWhitespace } from "../utils"
  * @param embeddingProvider - Optional local embedding provider.
  * @param personaStore - Persona storage for user persona injection.
  * @param now - Clock function.
+ * @param allProjectIds - Optional project ID list for worktree multi-project queries.
  * @returns A context block or an empty string.
  */
 export async function generateSessionContext(
@@ -23,8 +25,11 @@ export async function generateSessionContext(
   embeddingProvider: EmbeddingProvider | null,
   personaStore: PersonaStore,
   now: () => number,
+  allProjectIds?: string[],
 ): Promise<string> {
-  const recentObservations = await store.getRecentObservations(config.indexSize)
+  const recentObservations = allProjectIds && allProjectIds.length > 1
+    ? await store.getRecentObservationsMulti(allProjectIds, config.indexSize)
+    : await store.getRecentObservations(config.indexSize)
   const persona = await personaStore.getPersona()
   const personaBlock = persona?.content
     ? [
@@ -45,7 +50,9 @@ export async function generateSessionContext(
     return personaBlock
   }
 
-  const summaries = await store.getRecentSummaries(config.summaryLookback)
+  const summaries = allProjectIds && allProjectIds.length > 1
+    ? await store.getRecentSummariesMulti(allProjectIds, config.summaryLookback)
+    : await store.getRecentSummaries(config.summaryLookback)
   const semanticObservations = await getSemanticContextObservations(store, sessionId, config, embeddingProvider)
   const indexLines = recentObservations.map(
     (observation) =>
@@ -72,9 +79,17 @@ export async function generateSessionContext(
     ].join("\n")
     : ""
 
+  const totalObservationCount = await store.countObservations()
+  const tokenEconomics = computeTokenEconomics(recentObservations)
+  const priorSessionBlock = await getPriorSessionContext(store, sessionId)
+
   const sections = [
     personaBlock,
+    priorSessionBlock,
     "<memory_context>",
+    `## Memory Status`,
+    `📊 ${totalObservationCount} observations | 💾 ${tokenEconomics.savingsPercent}% compression savings`,
+    "",
     "You have access to persistent memory from previous OpenCode sessions for this project.",
     "",
     `## Recent Observation Index (${recentObservations.length} entries)`,
@@ -158,6 +173,26 @@ export async function generateCompactionContext(store: MemoryStore, now: () => n
         `- ${observation.title} (${observation.type}, ${formatRelativeTime(observation.createdAt, now)}): ${normalizeWhitespace(observation.narrative)}`,
     ),
   ].join("\n")
+}
+
+/**
+ * Computes compression savings from a set of observations.
+ *
+ * @param observations - Observations with raw and compressed token counts.
+ * @returns Token economics summary.
+ */
+function computeTokenEconomics(observations: Array<{ rawTokenCount: number; compressedTokenCount: number }>): {
+  totalRawTokens: number
+  totalCompressedTokens: number
+  savingsPercent: number
+} {
+  const totalRawTokens = observations.reduce((sum, obs) => sum + obs.rawTokenCount, 0)
+  const totalCompressedTokens = observations.reduce((sum, obs) => sum + obs.compressedTokenCount, 0)
+  const savingsPercent = totalRawTokens > 0
+    ? Math.round(((totalRawTokens - totalCompressedTokens) / totalRawTokens) * 100)
+    : 0
+
+  return { totalRawTokens, totalCompressedTokens, savingsPercent }
 }
 
 /**

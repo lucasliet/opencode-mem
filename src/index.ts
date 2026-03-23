@@ -1,4 +1,5 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin"
+import { detectWorktree } from "./worktree"
 import { loadConfig } from "./config"
 import { LanguageModelObservationCompressor, SessionPromptObservationCompressor } from "./compression/compressor"
 import { PersonaExtractor } from "./compression/persona-extractor"
@@ -43,6 +44,10 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
       projectRoot: input.worktree,
       directory: input.directory,
     }
+    const worktreeInfo = detectWorktree(input.worktree)
+    const allProjectIds = worktreeInfo.isWorktree && worktreeInfo.parentProjectName
+      ? [worktreeInfo.parentProjectName, scope.projectId]
+      : [scope.projectId]
     const database = await createMemoryDatabase(pluginConfig)
     const store = new MemoryStore(database, scope, now)
     const personaStore = new PersonaStore(database, now)
@@ -121,7 +126,7 @@ export function createMemoryPlugin(options: MemoryPluginOptions = {}): Plugin {
         logger,
         now,
       ),
-      "experimental.chat.system.transform": createSystemTransformHook(store, pluginConfig, embeddingProvider, personaStore, state, now),
+      "experimental.chat.system.transform": createSystemTransformHook(store, pluginConfig, embeddingProvider, personaStore, state, now, allProjectIds),
       "experimental.session.compacting": createCompactionHook(store, state, now),
     }
   }

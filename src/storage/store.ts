@@ -380,6 +380,52 @@ export class MemoryStore {
   }
 
   /**
+   * Retrieves recent observations from multiple projects (worktree support).
+   *
+   * @param projectIds - Project identifiers to query across.
+   * @param limit - Maximum number of rows.
+   * @returns Observations from all projects ordered from newest to oldest.
+   */
+  async getRecentObservationsMulti(projectIds: string[], limit: number): Promise<Observation[]> {
+    if (projectIds.length <= 1) {
+      return this.getRecentObservations(limit)
+    }
+
+    const rows = this.database.db
+      .select()
+      .from(observations)
+      .where(inArray(observations.projectId, projectIds))
+      .orderBy(desc(observations.createdAt))
+      .limit(limit)
+      .all()
+
+    return rows.map(mapObservation)
+  }
+
+  /**
+   * Retrieves recent summaries from multiple projects (worktree support).
+   *
+   * @param projectIds - Project identifiers to query across.
+   * @param limit - Maximum number of summaries.
+   * @returns Summaries from all projects ordered from newest to oldest.
+   */
+  async getRecentSummariesMulti(projectIds: string[], limit: number): Promise<SessionSummary[]> {
+    if (projectIds.length <= 1) {
+      return this.getRecentSummaries(limit)
+    }
+
+    const rows = this.database.db
+      .select()
+      .from(sessionSummaries)
+      .where(inArray(sessionSummaries.projectId, projectIds))
+      .orderBy(desc(sessionSummaries.createdAt))
+      .limit(limit)
+      .all()
+
+    return rows.map(mapSessionSummary)
+  }
+
+  /**
    * Stores a user prompt for later summarization and retrieval.
    *
    * @param prompt - Prompt payload.

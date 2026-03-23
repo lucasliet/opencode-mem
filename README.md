@@ -8,8 +8,11 @@ Persistent cross-session memory plugin for OpenCode, designed as a port of claud
 - Hybrid-ready architecture for `FTS5 + sqlite-vec`
 - Crash-safe pending queue for tool outputs
 - Async AI compression pipeline (in-process)
-- Session summaries
+- Session summaries with structured fields (requested/investigated/learned/completed/next steps)
 - Global persona memory (cross-project user preferences)
+- Git worktree detection with multi-project memory queries
+- Prior session continuity ("Where You Left Off" context block)
+- Token economics display (compression savings in context header)
 - Retrieval tools: `memory_search`, `memory_timeline`, `memory_get`
 - Write tool: `memory_add` (explicit agent-controlled persistence)
 - Delete tool: `memory_forget` (with preview + confirmation token)
