@@ -1,18 +1,32 @@
+import path from "node:path"
 import type { Observation, PendingMessage, SessionSummary, UserPromptRecord } from "../types"
 import { formatTimestamp, normalizeWhitespace } from "../utils"
+
+/**
+ * Derives a short project label from the project root path.
+ *
+ * @param projectRoot - Absolute path to the project root.
+ * @returns A human-readable project label.
+ */
+function deriveProjectLabel(projectRoot: string): string {
+  return path.basename(projectRoot) || projectRoot
+}
 
 /**
  * Builds the prompt used to compress a raw tool execution into a structured observation.
  *
  * @param pendingMessage - Pending tool output waiting for compression.
+ * @param projectContext - Optional project name or label for contextual framing.
  * @returns A prompt string for the compression model.
  */
-export function buildCompressionPrompt(pendingMessage: PendingMessage): string {
+export function buildCompressionPrompt(pendingMessage: PendingMessage, projectContext?: string): string {
   const metadata = pendingMessage.rawMetadata
     ? JSON.stringify(pendingMessage.rawMetadata, null, 2)
     : "{}"
 
-  return `You are compressing tool execution output for the feature "port claude-mem to OpenCode according to the DAQ".
+  const contextLabel = projectContext ?? deriveProjectLabel(pendingMessage.projectRoot)
+
+  return `You are compressing tool execution output in the context of the project "${contextLabel}".
 
 Produce a compact persistent memory observation for a coding agent.
 
@@ -60,11 +74,13 @@ ${pendingMessage.rawContent}
  *
  * @param prompts - Captured prompts from the session.
  * @param observations - Compressed observations from the session.
+ * @param projectContext - Optional project name or label for contextual framing.
  * @returns A prompt string for the summarization model.
  */
 export function buildSessionSummaryPrompt(
   prompts: UserPromptRecord[],
   observations: Observation[],
+  projectContext?: string,
 ): string {
   const promptLines = prompts
     .slice(-8)
@@ -78,7 +94,12 @@ export function buildSessionSummaryPrompt(
     )
     .join("\n")
 
-  return `You are summarizing a coding session for the feature "port claude-mem to OpenCode according to the DAQ".
+  const contextLabel = projectContext
+    ?? deriveProjectLabel(
+      observations[0]?.projectRoot ?? prompts[0]?.projectRoot ?? "unknown project",
+    )
+
+  return `You are summarizing a coding session for the project "${contextLabel}".
 
 Return ONLY valid JSON with this exact shape:
 {
