@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test"
+import { Effect } from "effect"
 import { createMemoryForgetTool } from "../src/tools/memory-forget"
 import { createMemoryDatabase } from "../src/storage/db"
 import { MemoryStore } from "../src/storage/store"
 import type { Observation, PluginConfig, ProjectScope } from "../src/types"
+import type { ToolResult } from "@opencode-ai/plugin"
 
 function createPluginConfig(): PluginConfig {
   return {
@@ -78,7 +80,7 @@ function createToolContext(messageID: string): {
     patterns: string[]
     always: string[]
     metadata: { [key: string]: any }
-  }): Promise<void>
+  }): Effect.Effect<void>
 } {
   return {
     sessionID: "session_1",
@@ -88,7 +90,7 @@ function createToolContext(messageID: string): {
     worktree: "/tmp/project",
     abort: AbortSignal.timeout(5_000),
     metadata() {},
-    ask: async () => {},
+    ask: () => Effect.void,
   }
 }
 
@@ -218,7 +220,8 @@ describe("memory_forget tool", () => {
  * @param output - Preview tool output.
  * @returns Token string or null.
  */
-function extractToken(output: string): string | null {
-  const match = output.match(/Confirmation token: ([a-z0-9]+)/i)
+function extractToken(output: ToolResult): string | null {
+  const text = typeof output === "string" ? output : output.output
+  const match = text.match(/Confirmation token: ([a-z0-9]+)/i)
   return match?.[1] ?? null
 }
