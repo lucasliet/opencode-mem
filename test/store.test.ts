@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { createMemoryDatabase } from "../src/storage/db"
-import { MemoryStore } from "../src/storage/store"
+import { MemoryStore, mapObservation } from "../src/storage/store"
 import type { EmbeddingSearchOptions, Observation, PendingMessage, PluginConfig, ProjectScope, SessionSummary, UserPromptRecord } from "../src/types"
+import type { ObservationRow } from "../src/storage/schema"
 
 function createPluginConfig(): PluginConfig {
   return {
@@ -406,5 +407,89 @@ describe("memory store", () => {
 
     expect(count).toBe(1)
     expect(logs.length).toBeGreaterThan(0)
+  })
+})
+
+function createRow(overrides: Partial<ObservationRow> = {}): ObservationRow {
+  return {
+    id: "obs_1",
+    projectId: "project_1",
+    projectRoot: "/tmp/project",
+    sessionId: "session_1",
+    type: "tool_output",
+    title: "Observation title",
+    subtitle: "Observation subtitle",
+    narrative: "Observation narrative",
+    facts: '["fact one"]',
+    concepts: '["concept"]',
+    filesInvolved: '["src/index.ts"]',
+    rawTokenCount: 100,
+    compressedTokenCount: 20,
+    toolName: "bash",
+    modelUsed: "anthropic/claude-haiku-4-5",
+    quality: "high",
+    rawFallback: null,
+    createdAt: 1_000_000,
+    ...overrides,
+  }
+}
+
+describe("mapObservation", () => {
+  test("shouldMapValidRowCorrectly", () => {
+    const row = createRow()
+    const result = mapObservation(row)
+
+    expect(result.filesInvolved).toEqual(["src/index.ts"])
+    expect(result.facts).toEqual(["fact one"])
+    expect(result.concepts).toEqual(["concept"])
+  })
+
+  test("shouldReturnEmptyFilesInvolvedWhenStoredAsString", () => {
+    const row = createRow({ filesInvolved: '"src/index.ts"' })
+    const result = mapObservation(row)
+
+    expect(result.filesInvolved).toEqual([])
+  })
+
+  test("shouldReturnEmptyFilesInvolvedWhenStoredAsObject", () => {
+    const row = createRow({ filesInvolved: '{"path":"src/index.ts"}' })
+    const result = mapObservation(row)
+
+    expect(result.filesInvolved).toEqual([])
+  })
+
+  test("shouldReturnEmptyFactsWhenStoredAsNumber", () => {
+    const row = createRow({ facts: "42" })
+    const result = mapObservation(row)
+
+    expect(result.facts).toEqual([])
+  })
+
+  test("shouldReturnEmptyConceptsWhenStoredAsNull", () => {
+    const row = createRow({ concepts: "null" })
+    const result = mapObservation(row)
+
+    expect(result.concepts).toEqual([])
+  })
+
+  test("shouldFilterNonStringItemsFromArray", () => {
+    const row = createRow({ filesInvolved: '["a.ts", 42, null, "b.ts"]' })
+    const result = mapObservation(row)
+
+    expect(result.filesInvolved).toEqual(["a.ts", "b.ts"])
+  })
+
+  test("shouldReturnEmptyWhenFieldIsEmpty", () => {
+    const row = createRow({ filesInvolved: "" })
+    const result = mapObservation(row)
+
+    expect(result.filesInvolved).toEqual([])
+  })
+
+  test("shouldReturnEmptyWhenJsonIsInvalid", () => {
+    const row = createRow({ filesInvolved: "{broken json" })
+    const result = mapObservation(row)
+
+    expect(result.filesInvolved).toEqual([])
   })
 })

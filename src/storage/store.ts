@@ -34,7 +34,7 @@ import type {
   ToolUsageStat,
   UserPromptRecord,
 } from "../types"
-import { createSortableId, parseJsonValue, sanitizeFtsQuery, serializeJson } from "../utils"
+import { createSortableId, ensureStringArray, parseJsonValue, sanitizeFtsQuery, serializeJson } from "../utils"
 
 type MaxRow = { value: number | null }
 
@@ -1633,9 +1633,9 @@ export function mapObservation(row: ObservationRow): Observation {
     title: row.title,
     subtitle: row.subtitle ?? null,
     narrative: row.narrative,
-    facts: parseJsonValue<string[]>(row.facts, []),
-    concepts: parseJsonValue<string[]>(row.concepts, []),
-    filesInvolved: parseJsonValue<string[]>(row.filesInvolved, []),
+    facts: ensureStringArray(row.facts),
+    concepts: ensureStringArray(row.concepts),
+    filesInvolved: ensureStringArray(row.filesInvolved),
     rawTokenCount: row.rawTokenCount,
     compressedTokenCount: row.compressedTokenCount,
     toolName: row.toolName ?? null,

@@ -176,6 +176,31 @@ export function parseJsonValue<T>(value: string | null | undefined, fallback: T)
 }
 
 /**
+ * Parses a JSON string and ensures the result is an array of strings.
+ * Falls back to an empty array when the value is missing, invalid JSON,
+ * or parses to a non-array type (e.g. a string, object, or number).
+ *
+ * @param value - JSON text or nullish value.
+ * @returns A guaranteed string array.
+ */
+export function ensureStringArray(value: string | null | undefined): string[] {
+  if (!value) {
+    return []
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (!Array.isArray(parsed)) {
+      return []
+    }
+
+    return parsed.filter((item): item is string => typeof item === "string")
+  } catch {
+    return []
+  }
+}
+
+/**
  * Serializes any JSON-compatible value.
  *
  * @param value - Value to serialize.
