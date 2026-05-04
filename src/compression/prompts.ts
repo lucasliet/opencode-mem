@@ -13,6 +13,65 @@ function deriveProjectLabel(projectRoot: string): string {
 }
 
 /**
+ * Derives a feature context description from the session's user prompts and observations.
+ * Falls back to project directory name when no content is available.
+ *
+ * @param prompts - Captured user prompts from the session.
+ * @param observations - Compressed observations from the session.
+ * @param fallbackRoot - Project root path used as final fallback.
+ * @returns A human-readable feature context string.
+ */
+function deriveSessionContext(
+  prompts: UserPromptRecord[],
+  observations: Observation[],
+  fallbackRoot: string,
+): string {
+  const firstPrompt = prompts[0]
+  if (firstPrompt) {
+    const cleaned = normalizeWhitespace(firstPrompt.content)
+    const truncated = cleaned.length > 150 ? cleaned.slice(0, 150).trimEnd() + "..." : cleaned
+    return truncated
+  }
+
+  if (observations.length > 0) {
+    const titles = observations
+      .slice(0, 3)
+      .map((o) => o.title)
+      .filter(Boolean)
+      .join("; ")
+    if (titles) {
+      return titles.length > 150 ? titles.slice(0, 150).trimEnd() + "..." : titles
+    }
+  }
+
+  return deriveProjectLabel(fallbackRoot)
+}
+
+/**
+ * Derives a context snippet from a pending tool output message.
+ * Uses the title or first lines of raw content, falling back to project directory name.
+ *
+ * @param pendingMessage - Pending tool output waiting for compression.
+ * @returns A human-readable context string.
+ */
+function deriveToolContext(pendingMessage: PendingMessage): string {
+  if (pendingMessage.title) {
+    return pendingMessage.title.length > 150
+      ? pendingMessage.title.slice(0, 150).trimEnd() + "..."
+      : pendingMessage.title
+  }
+
+  const firstLine = pendingMessage.rawContent.split("\n")[0]?.trim()
+  if (firstLine) {
+    return firstLine.length > 150
+      ? firstLine.slice(0, 150).trimEnd() + "..."
+      : firstLine
+  }
+
+  return deriveProjectLabel(pendingMessage.projectRoot)
+}
+
+/**
  * Builds the prompt used to compress a raw tool execution into a structured observation.
  *
  * @param pendingMessage - Pending tool output waiting for compression.
@@ -24,9 +83,9 @@ export function buildCompressionPrompt(pendingMessage: PendingMessage, projectCo
     ? JSON.stringify(pendingMessage.rawMetadata, null, 2)
     : "{}"
 
-  const contextLabel = projectContext ?? deriveProjectLabel(pendingMessage.projectRoot)
+  const contextLabel = projectContext ?? deriveToolContext(pendingMessage)
 
-  return `You are compressing tool execution output in the context of the project "${contextLabel}".
+  return `You are compressing tool execution output in the context of "${contextLabel}".
 
 Produce a compact persistent memory observation for a coding agent.
 
@@ -95,11 +154,13 @@ export function buildSessionSummaryPrompt(
     .join("\n")
 
   const contextLabel = projectContext
-    ?? deriveProjectLabel(
+    ?? deriveSessionContext(
+      prompts,
+      observations,
       observations[0]?.projectRoot ?? prompts[0]?.projectRoot ?? "unknown project",
     )
 
-  return `You are summarizing a coding session for the project "${contextLabel}".
+  return `You are summarizing a coding session about "${contextLabel}".
 
 Return ONLY valid JSON with this exact shape:
 {

@@ -1,6 +1,6 @@
 {
   "name": "opencode-memory-plugin",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Persistent cross-session memory plugin for OpenCode",
   "type": "module",
   "main": "./dist/index.js",
