@@ -28,6 +28,8 @@ Conversation:
 User: {user_message}
 Assistant: {assistant_message}
 
+Assistant may be "(none)" when unavailable. In that case, infer only from the user message.
+
 Extract new facts as JSON array:`
 
 /**

@@ -30,7 +30,7 @@ export class PersonaExtractor {
     currentPersona: string
     abortSignal?: AbortSignal
   }): Promise<string[]> {
-    if (!input.userMessage.trim() || !input.assistantMessage.trim()) {
+    if (!input.userMessage.trim()) {
       return []
     }
 
@@ -38,10 +38,14 @@ export class PersonaExtractor {
       return []
     }
 
+    const assistantMessage = input.assistantMessage.trim().length > 0
+      ? input.assistantMessage.slice(0, 2000)
+      : "(none)"
+
     const prompt = PERSONA_EXTRACTION_PROMPT
       .replace("{current_persona}", input.currentPersona || "(empty)")
       .replace("{user_message}", input.userMessage.slice(0, 2000))
-      .replace("{assistant_message}", input.assistantMessage.slice(0, 2000))
+      .replace("{assistant_message}", assistantMessage)
 
     try {
       const created = await this.input.client.session.create({
