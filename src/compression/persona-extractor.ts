@@ -26,7 +26,7 @@ export class PersonaExtractor {
    */
   async extract(input: {
     userMessage: string
-    assistantMessage: string
+    assistantMessage?: string
     currentPersona: string
     abortSignal?: AbortSignal
   }): Promise<string[]> {
@@ -38,8 +38,9 @@ export class PersonaExtractor {
       return []
     }
 
-    const assistantMessage = input.assistantMessage.trim().length > 0
-      ? input.assistantMessage.slice(0, 2000)
+    const normalizedAssistant = input.assistantMessage?.trim() ?? ""
+    const assistantMessage = normalizedAssistant.length > 0
+      ? normalizedAssistant.slice(0, 2000)
       : "(none)"
 
     const prompt = PERSONA_EXTRACTION_PROMPT

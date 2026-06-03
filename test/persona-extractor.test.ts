@@ -111,6 +111,22 @@ describe("persona extractor", () => {
     expect(harness.state.internalSessionIds.size).toBe(0)
   })
 
+  test("shouldExtractFactsWhenAssistantMessageIsUndefined", async () => {
+    const harness = createExtractorHarness('["Prefers concise responses"]')
+
+    const facts = await harness.extractor.extract({
+      userMessage: "Please keep answers brief.",
+      currentPersona: "",
+    })
+
+    expect(facts).toEqual(["Prefers concise responses"])
+    expect(harness.counters.createCalls).toBe(1)
+    expect(harness.counters.promptCalls).toBe(1)
+    expect(harness.counters.deleteCalls).toBe(1)
+    expect(harness.getLastPromptText()).toContain("Assistant: (none)")
+    expect(harness.state.internalSessionIds.size).toBe(0)
+  })
+
   test("shouldReturnEmptyWhenPersonaExceedsMaxLength", async () => {
     const harness = createExtractorHarness('["Prefers concise responses"]')
 
